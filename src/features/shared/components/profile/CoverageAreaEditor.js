@@ -29,6 +29,7 @@ const defaultCopy = {
   searchPlaceholder: 'Caută o adresă sau un reper validat',
   searchHint: 'Alege întâi județul și orașul, apoi caută locația exactă.',
   searchEmpty: 'Nu am găsit sugestii pentru căutarea curentă.',
+  unauthenticatedSearchError: 'Autentifică-te din nou pentru a căuta adresa.',
   selectedLocationTitle: 'Locație selectată',
   clearSelection: 'Șterge locația',
   previewTitle: 'Preview zonă publică',
@@ -101,6 +102,7 @@ export default function CoverageAreaEditor({
   value,
   onChange,
   errorText,
+  isAuthenticated = true,
   copy = {},
 }) {
   const resolvedCopy = { ...defaultCopy, ...(copy || {}) };
@@ -135,13 +137,33 @@ export default function CoverageAreaEditor({
   useEffect(() => {
     const trimmedQuery = sanitizeText(searchQuery);
     const normalizedSelectedLabel = selectedLocationText;
-
-    if (
+    const shouldBlockSearch = (
       !value?.countyCode
       || !value?.cityCode
       || trimmedQuery.length < 2
       || (selectedPlaceId && normalizedSelectedLabel && trimmedQuery === normalizedSelectedLabel)
-    ) {
+    );
+
+    if (!isAuthenticated) {
+      if (!isAuthenticated && trimmedQuery.length >= 2) {
+        setLocalError(resolvedCopy.unauthenticatedSearchError);
+      }
+
+      if (trimmedQuery.length < 2) {
+        setLocalError((current) => (
+          current === resolvedCopy.unauthenticatedSearchError ? '' : current
+        ));
+      }
+      setSuggestions([]);
+      setIsSearching(false);
+      return undefined;
+    }
+
+    setLocalError((current) => (
+      current === resolvedCopy.unauthenticatedSearchError ? '' : current
+    ));
+
+    if (shouldBlockSearch) {
       setSuggestions([]);
       setIsSearching(false);
       return undefined;
@@ -176,7 +198,15 @@ export default function CoverageAreaEditor({
     }, 320);
 
     return () => clearTimeout(timerId);
-  }, [searchQuery, selectedLocationText, selectedPlaceId, value?.cityCode, value?.countyCode]);
+  }, [
+    isAuthenticated,
+    resolvedCopy.unauthenticatedSearchError,
+    searchQuery,
+    selectedLocationText,
+    selectedPlaceId,
+    value?.cityCode,
+    value?.countyCode,
+  ]);
 
   function openPicker(type) {
     setPickerState({ visible: true, type });
@@ -209,6 +239,11 @@ export default function CoverageAreaEditor({
   }
 
   async function handleResolveSuggestion(suggestion) {
+    if (!isAuthenticated) {
+      setLocalError(resolvedCopy.unauthenticatedSearchError);
+      return;
+    }
+
     setIsResolving(true);
     setLocalError('');
 

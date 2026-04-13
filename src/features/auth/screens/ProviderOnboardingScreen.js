@@ -446,6 +446,7 @@ export default function ProviderOnboardingScreen() {
           value={professionalProfile.coverageAreaConfig}
           onChange={setCoverageAreaConfig}
           errorText={fieldErrors['professionalProfile.coverageArea']}
+          isAuthenticated={Boolean(session?.uid)}
           copy={{
             countryLabel: t('providerOnboarding.coverageCountry'),
             countryPlaceholder: t('providerOnboarding.coverageCountryPlaceholder'),
@@ -457,6 +458,7 @@ export default function ProviderOnboardingScreen() {
             searchPlaceholder: t('providerOnboarding.coverageSearchPlaceholder'),
             searchHint: t('providerOnboarding.coverageSearchHint'),
             searchEmpty: t('providerOnboarding.coverageSearchEmpty'),
+            unauthenticatedSearchError: t('providerOnboarding.coverageUnauthenticatedSearchError'),
             selectedLocationTitle: t('providerOnboarding.coverageSelectedLocationTitle'),
             clearSelection: t('providerOnboarding.coverageClearSelection'),
             previewTitle: t('providerOnboarding.coveragePreviewTitle'),

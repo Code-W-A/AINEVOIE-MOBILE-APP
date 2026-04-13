@@ -13,6 +13,7 @@ import { TextInput } from 'react-native-paper';
 import { useNavigation, useRouter } from 'expo-router';
 import MyStatusBar from '../../../../components/myStatusBar';
 import { useLocale } from '../../../../context/localeContext';
+import { useSession } from '../../../../context/sessionContext';
 import { useDemoAvatar } from '../../../../hooks/useDemoAvatar';
 import { useProviderAvailability } from '../../../../hooks/useProviderAvailability';
 import { useProviderOnboarding } from '../../../../hooks/useProviderOnboarding';
@@ -31,6 +32,7 @@ export default function SharedEditProfileScreen({ role }) {
   const navigation = useNavigation();
   const router = useRouter();
   const { t } = useLocale();
+  const { session } = useSession();
   const normalizedRole = role === 'provider' ? 'provider' : 'user';
   const roleConfig = getRoleDisplayConfig(normalizedRole, t);
   const { avatarUri, saveAvatar } = useDemoAvatar(normalizedRole);
@@ -237,6 +239,7 @@ export default function SharedEditProfileScreen({ role }) {
         <CoverageAreaEditor
           value={coverageAreaConfig}
           onChange={updateCoverageAreaConfig}
+          isAuthenticated={Boolean(session?.uid)}
           copy={{
             countryLabel: t('profile.coverageCountry'),
             countryPlaceholder: t('profile.coverageCountryPlaceholder'),
@@ -248,6 +251,7 @@ export default function SharedEditProfileScreen({ role }) {
             searchPlaceholder: t('profile.coverageSearchPlaceholder'),
             searchHint: t('profile.coverageSearchHint'),
             searchEmpty: t('profile.coverageSearchEmpty'),
+            unauthenticatedSearchError: t('profile.coverageUnauthenticatedSearchError'),
             selectedLocationTitle: t('profile.coverageSelectedLocationTitle'),
             clearSelection: t('profile.coverageClearSelection'),
             previewTitle: t('profile.coveragePreviewTitle'),
