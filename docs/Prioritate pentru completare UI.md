@@ -1,0 +1,4 @@
+7. Prioritate pentru completare UI
+P1: auth alternativ real telefon/social/OTP, status plată provider, ecran de failure la plată, secțiuni user-facing de disponibilitate și zonă de acoperire la furnizor, checkbox legal de acceptare, înlocuirea ecranelor legale placeholder cu conținut real.
+P2: notification preferences, settings/security/delete account, toggle activ/inactiv servicii provider, blocare date excepționale în disponibilitate, motiv de respingere/amânare la provider, flow complet de anulare booking user.
+P3: uniformizare copy RO/EN, eliminare/curățare rute legacy sau declarare explicită a tuturor rutelor active, alinierea sursei de adevăr pentru reviews între detaliu furnizor, all reviews și provider review tab.

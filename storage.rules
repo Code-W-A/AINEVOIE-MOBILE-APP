@@ -1,0 +1,39 @@
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function isSelf(uid) {
+      return signedIn() && request.auth.uid == uid;
+    }
+
+    function hasRole(role) {
+      return signedIn() && request.auth.token.role == role;
+    }
+
+    function isProviderDocumentType(documentType) {
+      return documentType == 'identity' || documentType == 'professional';
+    }
+
+    match /users/{uid}/avatar/{fileName} {
+      allow read: if isSelf(uid) || hasRole('admin');
+      allow write: if isSelf(uid) && hasRole('user');
+    }
+
+    match /providers/{uid}/avatar/{fileName} {
+      allow read: if true;
+      allow write: if isSelf(uid) && hasRole('provider');
+    }
+
+    match /providers/{uid}/documents/{documentType}/{fileName} {
+      allow read: if isProviderDocumentType(documentType) && (isSelf(uid) || hasRole('admin'));
+      allow write: if isProviderDocumentType(documentType) && isSelf(uid) && hasRole('provider');
+    }
+
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+  }
+}

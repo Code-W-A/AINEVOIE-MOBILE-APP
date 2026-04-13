@@ -1,0 +1,54 @@
+{
+  "project_info": {
+    "project_number": "534892864524",
+    "project_id": "ainevoie-ca861",
+    "storage_bucket": "ainevoie-ca861.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:534892864524:android:193c6f6df57fc81fe4ba29",
+        "android_client_info": {
+          "package_name": "com.ainevoie.nrb"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "534892864524-jh1ngoiuu8uem6bb1qhdvniv8grq3it2.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.ainevoie.nrb",
+            "certificate_hash": "da48f57f742f8e5931fbcc12081e4be70e643cd1"
+          }
+        },
+        {
+          "client_id": "534892864524-vfv3tsmvuuefueb5nvs6nubs9gmc7mil.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDqLaAXE4eYZ7lhFZnyR0fCQxS4UjYV71k"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "534892864524-vfv3tsmvuuefueb5nvs6nubs9gmc7mil.apps.googleusercontent.com",
+              "client_type": 3
+            },
+            {
+              "client_id": "534892864524-ito6npbi7j5grlbps37u40mga3f75b8a.apps.googleusercontent.com",
+              "client_type": 2,
+              "ios_info": {
+                "bundle_id": "com.ainevoie.nrb"
+              }
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

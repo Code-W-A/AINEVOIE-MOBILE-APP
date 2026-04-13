@@ -1,0 +1,278 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function isSelf(uid) {
+      return signedIn() && request.auth.uid == uid;
+    }
+
+    function providerCanEditProfessionalProfile() {
+      return resource.data.status == 'pre_registered'
+        || resource.data.status == 'rejected'
+        || resource.data.status == 'approved';
+    }
+
+    function isServiceStatus(value) {
+      return value == 'draft'
+        || value == 'active'
+        || value == 'inactive'
+        || value == 'archived';
+    }
+
+    function providerCanManageServiceDocs(uid) {
+      return isSelf(uid)
+        && exists(/databases/$(database)/documents/providers/$(uid))
+        && get(/databases/$(database)/documents/providers/$(uid)).data.status != 'suspended';
+    }
+
+    function userMutableKeys() {
+      return [
+        'displayName',
+        'phoneNumber',
+        'locale',
+        'primaryLocation',
+        'primaryLocation.formattedAddress',
+        'primaryLocation.lat',
+        'primaryLocation.lng',
+        'primaryLocation.countryCode',
+        'primaryLocation.countryName',
+        'primaryLocation.countyCode',
+        'primaryLocation.countyName',
+        'primaryLocation.cityCode',
+        'primaryLocation.cityName',
+        'primaryLocation.source',
+        'profileCompletion',
+        'profileCompletion.hasPrimaryLocation',
+        'notificationPreferences',
+        'notificationPreferences.bookings',
+        'notificationPreferences.messages',
+        'notificationPreferences.promoSystem',
+        'updatedAt',
+        'lastLoginAt'
+      ];
+    }
+
+    function userServerManagedKeys() {
+      return [
+        'uid',
+        'role',
+        'accountStatus',
+        'email',
+        'authProviders',
+        'photoPath',
+        'schemaVersion',
+        'createdAt',
+        'createdBy'
+      ];
+    }
+
+    function providerMutableKeys() {
+      return [
+        'phoneNumber',
+        'locale',
+        'notificationPreferences',
+        'notificationPreferences.bookings',
+        'notificationPreferences.messages',
+        'notificationPreferences.promoSystem',
+        'professionalProfile',
+        'professionalProfile.businessName',
+        'professionalProfile.displayName',
+        'professionalProfile.specialization',
+        'professionalProfile.baseRateAmount',
+        'professionalProfile.coverageArea',
+        'professionalProfile.coverageArea.countryCode',
+        'professionalProfile.coverageArea.countryName',
+        'professionalProfile.coverageArea.countyCode',
+        'professionalProfile.coverageArea.countyName',
+        'professionalProfile.coverageArea.cityCode',
+        'professionalProfile.coverageArea.cityName',
+        'professionalProfile.coverageArea.placeId',
+        'professionalProfile.coverageArea.locationLabel',
+        'professionalProfile.coverageArea.formattedAddress',
+        'professionalProfile.coverageArea.centerLat',
+        'professionalProfile.coverageArea.centerLng',
+        'professionalProfile.coverageAreaText',
+        'professionalProfile.shortBio',
+        'professionalProfile.availabilitySummary',
+        'updatedAt',
+        'lastLoginAt'
+      ];
+    }
+
+    function providerProfessionalProfileKeys() {
+      return [
+        'professionalProfile',
+        'professionalProfile.businessName',
+        'professionalProfile.displayName',
+        'professionalProfile.specialization',
+        'professionalProfile.baseRateAmount',
+        'professionalProfile.coverageArea',
+        'professionalProfile.coverageArea.countryCode',
+        'professionalProfile.coverageArea.countryName',
+        'professionalProfile.coverageArea.countyCode',
+        'professionalProfile.coverageArea.countyName',
+        'professionalProfile.coverageArea.cityCode',
+        'professionalProfile.coverageArea.cityName',
+        'professionalProfile.coverageArea.placeId',
+        'professionalProfile.coverageArea.locationLabel',
+        'professionalProfile.coverageArea.formattedAddress',
+        'professionalProfile.coverageArea.centerLat',
+        'professionalProfile.coverageArea.centerLng',
+        'professionalProfile.coverageAreaText',
+        'professionalProfile.shortBio',
+        'professionalProfile.availabilitySummary'
+      ];
+    }
+
+    function onlyChanges(allowedKeys) {
+      return request.resource.data.diff(resource.data).affectedKeys().hasOnly(allowedKeys);
+    }
+
+    function availabilityMutableKeys() {
+      return [
+        'weekSchedule',
+        'blockedDates',
+        'availabilitySummary',
+        'availabilityDayChips',
+        'hasConfiguredAvailability',
+        'updatedAt'
+      ];
+    }
+
+    function serviceCreateKeys() {
+      return [
+        'serviceId',
+        'providerId',
+        'name',
+        'description',
+        'categoryKey',
+        'categoryLabel',
+        'status',
+        'baseRateAmount',
+        'baseRateCurrency',
+        'estimatedDurationMinutes',
+        'createdAt',
+        'updatedAt',
+        'createdBy',
+        'updatedBy',
+        'schemaVersion'
+      ];
+    }
+
+    function serviceMutableKeys() {
+      return [
+        'name',
+        'description',
+        'categoryKey',
+        'categoryLabel',
+        'status',
+        'baseRateAmount',
+        'baseRateCurrency',
+        'estimatedDurationMinutes',
+        'updatedAt',
+        'updatedBy'
+      ];
+    }
+
+    function bookingReadableByActor() {
+      return signedIn()
+        && (
+          request.auth.uid == resource.data.userId
+          || request.auth.uid == resource.data.providerId
+        );
+    }
+
+    match /users/{uid} {
+      allow read: if isSelf(uid);
+      allow create, delete: if false;
+      allow update: if resource != null
+        && isSelf(uid)
+        && !request.resource.data.diff(resource.data).affectedKeys().hasAny(userServerManagedKeys())
+        && onlyChanges(userMutableKeys());
+    }
+
+    match /providers/{uid} {
+      allow read: if isSelf(uid);
+      allow create, delete: if false;
+      allow update: if resource != null
+        && isSelf(uid)
+        && request.resource.data.uid == resource.data.uid
+        && request.resource.data.role == resource.data.role
+        && request.resource.data.status == resource.data.status
+        && request.resource.data.accountStatus == resource.data.accountStatus
+        && request.resource.data.email == resource.data.email
+        && request.resource.data.authProviders == resource.data.authProviders
+        && request.resource.data.documents == resource.data.documents
+        && request.resource.data.reviewState == resource.data.reviewState
+        && request.resource.data.professionalProfile.avatarPath == resource.data.professionalProfile.avatarPath
+        && request.resource.data.schemaVersion == resource.data.schemaVersion
+        && request.resource.data.createdAt == resource.data.createdAt
+        && request.resource.data.createdBy == resource.data.createdBy
+        && request.resource.data.adminReview == resource.data.adminReview
+        && request.resource.data.suspension == resource.data.suspension
+        && request.resource.data.lastPublishedAt == resource.data.lastPublishedAt
+        && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(providerProfessionalProfileKeys()) || providerCanEditProfessionalProfile())
+        && onlyChanges(providerMutableKeys());
+
+      match /availability/{docId} {
+        allow read: if docId == 'profile';
+        allow create, update, delete: if false;
+      }
+
+      match /services/{serviceId} {
+        allow read: if isSelf(uid);
+        allow delete: if false;
+        allow create: if providerCanManageServiceDocs(uid)
+          && request.resource.data.keys().hasOnly(serviceCreateKeys())
+          && request.resource.data.serviceId == serviceId
+          && request.resource.data.providerId == uid
+          && request.resource.data.createdBy == request.auth.uid
+          && request.resource.data.updatedBy == request.auth.uid
+          && isServiceStatus(request.resource.data.status);
+        allow update: if resource != null
+          && providerCanManageServiceDocs(uid)
+          && request.resource.data.serviceId == resource.data.serviceId
+          && request.resource.data.providerId == resource.data.providerId
+          && request.resource.data.createdBy == resource.data.createdBy
+          && request.resource.data.createdAt == resource.data.createdAt
+          && request.resource.data.schemaVersion == resource.data.schemaVersion
+          && isServiceStatus(request.resource.data.status)
+          && onlyChanges(serviceMutableKeys());
+      }
+    }
+
+    match /providerDirectory/{document=**} {
+      allow read: if true;
+      allow write: if false;
+    }
+
+    match /bookings/{document=**} {
+      allow read: if bookingReadableByActor();
+      allow write: if false;
+    }
+
+    match /payments/{document=**} {
+      allow read, write: if false;
+    }
+
+    match /reviews/{document=**} {
+      allow read: if true;
+      allow write: if false;
+    }
+
+    match /auditEvents/{document=**} {
+      allow read, write: if false;
+    }
+
+    match /idempotencyKeys/{document=**} {
+      allow read, write: if false;
+    }
+
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

@@ -1,0 +1,8 @@
+{
+  "projects": {
+    "default": "ainevoie-ca861",
+    "dev": "ainevoie-ca861",
+    "staging": "replace-with-ainevoie-staging-project-id",
+    "prod": "replace-with-ainevoie-prod-project-id"
+  }
+}

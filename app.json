@@ -1,20 +1,35 @@
 {
   "expo": {
-    "name": "rn-UrbanHome-User",
-    "slug": "rn-UrbanHome-User",
+    "name": "AI Nevoie",
+    "slug": "ainevoie",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
-    "scheme": "myapp",
+    "scheme": "ainevoie",
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
     "ios": {
-      "supportsTablet": true
+      "bundleIdentifier": "com.ainevoie.nrb",
+      "buildNumber": "1.0.0",
+      "supportsTablet": false,
+      "infoPlist": {
+        "NSLocationWhenInUseUsageDescription": "AI Nevoie folosește locația pentru a seta adresa ta principală și pentru navigație corectă către client.",
+        "LSApplicationQueriesSchemes": [
+          "waze",
+          "comgooglemaps"
+        ]
+      }
     },
     "android": {
+      "package": "com.ainevoie.nrb",
+      "versionCode": 4,
+      "permissions": [
+        "ACCESS_COARSE_LOCATION",
+        "ACCESS_FINE_LOCATION"
+      ],
       "adaptiveIcon": {
-        "foregroundImage": "./assets/images/adaptive-icon.png",
-        "backgroundColor": "#ffffff"
+        "foregroundImage": "./assets/images/icon.png",
+        "backgroundColor": "#FFFFFF"
       }
     },
     "web": {
@@ -27,15 +42,30 @@
       [
         "expo-splash-screen",
         {
-          "image": "./assets/images/splash-icon.png",
-          "imageWidth": 200,
-          "resizeMode": "contain",
+          "image": "./assets/images/splash.png",
+          "imageWidth": 1284,
+          "resizeMode": "cover",
           "backgroundColor": "#ffffff"
         }
-      ]
+      ],
+      [
+        "expo-location",
+        {
+          "locationWhenInUsePermission": "AI Nevoie folosește locația pentru a seta adresa ta principală și pentru navigație corectă către client."
+        }
+      ],
+      "expo-font",
+      "expo-web-browser"
     ],
     "experiments": {
       "typedRoutes": true
-    }
+    },
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "76005ab7-ce8f-429d-96d3-eb2b35972160"
+      }
+    },
+    "owner": "shikatedo1"
   }
 }
