@@ -48,6 +48,7 @@
           }
         }
       ],
+      "./plugins/withAndroidGradleCompat.js",
       "expo-router",
       [
         "expo-splash-screen",
