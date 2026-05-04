@@ -138,6 +138,7 @@ export function SessionProvider({ children }) {
   const phoneConfirmationRef = useRef(null);
   const manualBootstrapRef = useRef(false);
   const bootstrapRequestIdRef = useRef(0);
+  const persistChainRef = useRef(Promise.resolve());
   const [session, setSession] = useState({
     ...defaultPersistedSession,
     isHydrated: false,
@@ -164,8 +165,13 @@ export function SessionProvider({ children }) {
       return;
     }
 
-    await AsyncStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(getPersistedShape(nextSessionState)));
-    await AsyncStorage.removeItem(LEGACY_SESSION_STORAGE_KEY);
+    const persistedShape = getPersistedShape(nextSessionState);
+    persistChainRef.current = persistChainRef.current
+      .then(() => AsyncStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(persistedShape)))
+      .then(() => AsyncStorage.removeItem(LEGACY_SESSION_STORAGE_KEY))
+      .catch(() => undefined);
+
+    await persistChainRef.current;
   }, []);
 
   useEffect(() => {
@@ -245,6 +251,7 @@ export function SessionProvider({ children }) {
   useEffect(() => {
     let isMounted = true;
     let unsubscribe = () => {};
+    let hydrateTimer = null;
 
     async function hydrateSession() {
       try {
@@ -272,8 +279,20 @@ export function SessionProvider({ children }) {
           return;
         }
 
+        hydrateTimer = setTimeout(() => {
+          if (!isMounted) {
+            return;
+          }
+          void markSignedOut(null);
+        }, 6000);
+
         const { auth } = getFirebaseServices();
         unsubscribe = onAuthStateChanged(auth, (firebaseUser) => {
+          if (hydrateTimer) {
+            clearTimeout(hydrateTimer);
+            hydrateTimer = null;
+          }
+
           if (!isMounted || manualBootstrapRef.current) {
             return;
           }
@@ -298,6 +317,10 @@ export function SessionProvider({ children }) {
 
     return () => {
       isMounted = false;
+      if (hydrateTimer) {
+        clearTimeout(hydrateTimer);
+        hydrateTimer = null;
+      }
       unsubscribe();
     };
   }, [markSignedOut, performBootstrap, persistSession]);

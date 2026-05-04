@@ -2,7 +2,7 @@ import React, { useMemo } from "react";
 import { View, Text, StyleSheet, Image, FlatList } from "react-native";
 import { MaterialIcons } from '@expo/vector-icons';
 import { Colors, Fonts, Sizes, CommonStyles } from "../../../../../../constant/styles";
-import { useDemoAvatar } from "../../../../../../hooks/useDemoAvatar";
+import { useProfileAvatar } from "../../../../../../hooks/useProfileAvatar";
 import { useProviderOnboarding } from "../../../../../../hooks/useProviderOnboarding";
 import { useProviderReviews } from "../../../../../../hooks/useProviderReviews";
 import ReviewCard from "../../../../shared/components/reviews/ReviewCard";
@@ -25,7 +25,7 @@ function formatReviewDate(createdAt) {
 
 const ReviewScreen = () => {
     const { data: providerOnboarding } = useProviderOnboarding();
-    const { avatarUri } = useDemoAvatar('provider');
+    const { avatarUri } = useProfileAvatar('provider');
     const { reviews } = useProviderReviews();
     const roleConfig = getRoleDisplayConfig('provider');
     const providerFallback = getProviderProfileFallback(providerOnboarding);

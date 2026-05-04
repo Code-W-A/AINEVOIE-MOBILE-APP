@@ -30,7 +30,6 @@ function normalizeBlockedDate(blockedDate, index = 0) {
   return {
     id: sanitizeText(blockedDate?.id) || `blocked_${Date.now()}_${index}`,
     dateKey: sanitizeText(blockedDate?.dateKey),
-    note: sanitizeText(blockedDate?.note),
     createdAt: blockedDate?.createdAt || new Date().toISOString(),
   };
 }

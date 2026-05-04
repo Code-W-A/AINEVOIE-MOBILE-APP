@@ -5,7 +5,7 @@ import { useRouter } from 'expo-router';
 import MyStatusBar from '../../../../components/myStatusBar';
 import { useLocale } from '../../../../context/localeContext';
 import { useSession } from '../../../../context/sessionContext';
-import { useDemoAvatar } from '../../../../hooks/useDemoAvatar';
+import { useProfileAvatar } from '../../../../hooks/useProfileAvatar';
 import { useProviderAvailability } from '../../../../hooks/useProviderAvailability';
 import { useProviderBookings } from '../../../../hooks/useProviderBookings';
 import { useProviderOnboarding } from '../../../../hooks/useProviderOnboarding';
@@ -75,7 +75,7 @@ export default function SharedRoleProfileScreen({ role }) {
   const { data: userProfile } = useUserProfile();
   const { reviews } = useUserReviews();
   const { reviews: providerReviews } = useProviderReviews();
-  const { avatarUri } = useDemoAvatar(normalizedRole);
+  const { avatarUri } = useProfileAvatar(normalizedRole);
   const { signOut } = useSession();
   const [showLogoutDialog, setShowLogoutDialog] = useState(false);
 
@@ -94,8 +94,8 @@ export default function SharedRoleProfileScreen({ role }) {
   );
 
   const profileName = normalizedRole === 'provider'
-    ? (providerProfileFallback?.profileDisplayName || roleConfig.profileDisplayName)
-    : (userProfile.name || roleConfig.profileDisplayName);
+    ? (providerProfileFallback?.profileDisplayName || roleConfig.profileTitle)
+    : (userProfile.name || roleConfig.profileTitle);
   const profileEmail = normalizedRole === 'provider'
     ? (providerProfileFallback?.profileEmail || roleConfig.profileEmail)
     : (userProfile.email || roleConfig.profileEmail);
@@ -262,7 +262,7 @@ export default function SharedRoleProfileScreen({ role }) {
             </View>
 
             {normalizedRole === 'provider' ? (
-              <View style={[styles.pendingBannerStyle, { backgroundColor: verificationUi.backgroundColor }]}>
+              <View style={[styles.pendingBannerStyle, { borderColor: verificationUi.color }]}>
                 <MaterialCommunityIcons
                   name={
                     providerOnboarding.verificationStatus === 'draft'
@@ -274,7 +274,7 @@ export default function SharedRoleProfileScreen({ role }) {
                   size={16}
                   color={verificationUi.color}
                 />
-                <Text style={[styles.pendingBannerTextStyle, { color: verificationUi.color }]}>{verificationUi.label}</Text>
+                <Text style={styles.pendingBannerTextStyle}>{verificationUi.label}</Text>
               </View>
             ) : null}
 
@@ -285,7 +285,7 @@ export default function SharedRoleProfileScreen({ role }) {
                   {profileName}
                 </Text>
                 <Text numberOfLines={1} style={styles.userEmailStyle}>
-                  {profileEmail}
+                  {profileEmail || t('profile.emailMissing')}
                 </Text>
                 <Text style={styles.userSubtitleStyle}>{profileSubtitle}</Text>
               </View>
@@ -573,12 +573,15 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     marginTop: 16,
+    backgroundColor: AinevoieDiscoveryTokens.surfaceCard,
+    borderWidth: 1,
     borderRadius: 999,
     paddingHorizontal: 12,
     paddingVertical: 8,
   },
   pendingBannerTextStyle: {
     ...AinevoieDiscoveryTypography.caption,
+    color: AinevoieDiscoveryTokens.textPrimary,
     marginLeft: 8,
     fontWeight: '700',
   },

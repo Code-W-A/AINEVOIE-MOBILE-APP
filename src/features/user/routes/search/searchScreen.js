@@ -1,9 +1,10 @@
-import React, { useState } from "react";
-import { View, StyleSheet, Text, TextInput, ScrollView, TouchableOpacity } from "react-native";
+import React, { useMemo, useState } from "react";
+import { View, StyleSheet, Text, TextInput, ScrollView, TouchableOpacity, ActivityIndicator } from "react-native";
 import { Fonts } from "../../../../../constant/styles";
 import { MaterialIcons } from '@expo/vector-icons';
 import MyStatusBar from "../../../../../components/myStatusBar";
 import { useNavigation, useRouter } from "expo-router";
+import { useProviderDirectoryList } from "../../../../../hooks/useProviderDirectoryList";
 import DiscoverySectionHeader from "../../../shared/components/DiscoverySectionHeader";
 import {
     AinevoieDiscoveryPrimitives as DiscoveryPrimitives,
@@ -11,50 +12,45 @@ import {
     AinevoieDiscoveryTypography as DiscoveryTypography,
     AinevoieDiscoveryTokens as DiscoveryTokens,
 } from "../../../shared/styles/discoverySystem";
-
-const recentSearchesList = [
-    {
-        id: '1',
-        search: 'Curățenie completă acasă',
-    },
-    {
-        id: '2',
-        search: 'Electrician',
-    },
-];
-
-const trendingSearchesList = [
-    {
-        id: '1',
-        search: 'Curățare canapea',
-    },
-    {
-        id: '2',
-        search: 'Masaj la domiciliu',
-    },
-    {
-        id: '3',
-        search: 'Instalator',
-    },
-    {
-        id: '4',
-        search: 'Tuns acasă',
-    },
-    {
-        id: '5',
-        search: 'Reparații aer condiționat',
-    },
-    {
-        id: '6',
-        search: 'Igienizare locuință',
-    },
-];
+import { resolveServiceCategory } from "../../../shared/utils/providerServices";
 
 const SearchScreen = () => {
     const navigation = useNavigation();
     const router = useRouter();
+    const { providers, isLoading } = useProviderDirectoryList();
     const [search, setSearch] = useState('');
     const [isSearchFocused, setIsSearchFocused] = useState(false);
+
+    const suggestedSearches = useMemo(() => {
+        const suggestionsMap = new Map();
+
+        providers.forEach((provider) => {
+            const services = provider.serviceSummaries?.length
+                ? provider.serviceSummaries.filter((service) => service.isActive !== false)
+                : [{ categoryKey: provider.categoryPrimary, categoryLabel: provider.categoryPrimary }];
+
+            services.forEach((service) => {
+                const category = resolveServiceCategory(service.categoryKey || service.categoryLabel || provider.categoryPrimary);
+                const label = service.name || category.label;
+                const key = String(label || category.key).trim().toLowerCase();
+
+                if (!key) {
+                    return;
+                }
+
+                const existingItem = suggestionsMap.get(key);
+                suggestionsMap.set(key, {
+                    id: key,
+                    search: label,
+                    count: (existingItem?.count || 0) + 1,
+                });
+            });
+        });
+
+        return Array.from(suggestionsMap.values())
+            .sort((firstItem, secondItem) => secondItem.count - firstItem.count || firstItem.search.localeCompare(secondItem.search))
+            .slice(0, 8);
+    }, [providers]);
 
     function openSearchResults(queryValue) {
         const normalizedQuery = queryValue.trim();
@@ -80,9 +76,9 @@ const SearchScreen = () => {
                         />
                     </TouchableOpacity>
                 </View>
-           
+
                 <Text style={styles.headerTitle}>Caută servicii</Text>
-               
+
                 {searchTextField()}
                 {search.trim().length ? (
                     <TouchableOpacity activeOpacity={0.92} onPress={() => openSearchResults(search)} style={styles.searchCtaButtonStyle}>
@@ -95,43 +91,52 @@ const SearchScreen = () => {
                 contentContainerStyle={styles.scrollContent}
                 showsVerticalScrollIndicator={false}
             >
-                {recentSearches()}
-                {trendingSearches()}
+                {suggestedSearchesSection()}
+                {recentSearchesEmptyState()}
             </ScrollView>
         </View>
     );
 
-    function trendingSearches() {
+    function suggestedSearchesSection() {
         return (
             <View style={styles.sectionWrap}>
-                <DiscoverySectionHeader title="Popular în zona ta" variant="ainevoie" />
+                <DiscoverySectionHeader title="Servicii disponibile" variant="ainevoie" />
                 <View style={styles.rowsWrap}>
-                    {trendingSearchesList.map((item) => (
+                    {isLoading ? (
+                        <View style={styles.emptyStateCard}>
+                            <ActivityIndicator size="small" color={DiscoveryTokens.accent} />
+                            <Text style={styles.emptyStateTitle}>Se încarcă sugestiile...</Text>
+                        </View>
+                    ) : null}
+                    {!isLoading && suggestedSearches.map((item) => (
                         <TouchableOpacity key={`${item.id}`} activeOpacity={0.9} onPress={() => openSearchResults(item.search)} style={styles.searchRow}>
                             <View style={styles.rowIconWrap}>
-                                <MaterialIcons name="trending-up" size={18} color={DiscoveryTokens.accent} />
+                                <MaterialIcons name="search" size={18} color={DiscoveryTokens.accent} />
                             </View>
                             <Text style={styles.rowText}>{item.search}</Text>
+                            <Text style={styles.rowCountText}>{item.count}</Text>
                         </TouchableOpacity>
                     ))}
+                    {!isLoading && !suggestedSearches.length ? (
+                        <View style={styles.emptyStateCard}>
+                            <MaterialIcons name="inbox" size={22} color={DiscoveryTokens.accent} />
+                            <Text style={styles.emptyStateTitle}>Nu există sugestii disponibile.</Text>
+                            <Text style={styles.emptyStateBody}>Sugestiile apar când există prestatori aprobați în Firebase.</Text>
+                        </View>
+                    ) : null}
                 </View>
             </View>
         );
     }
 
-    function recentSearches() {
+    function recentSearchesEmptyState() {
         return (
             <View style={styles.sectionWrap}>
                 <DiscoverySectionHeader title="Căutările tale recente" variant="ainevoie" />
-                <View style={styles.rowsWrap}>
-                    {recentSearchesList.map((item) => (
-                        <TouchableOpacity key={`${item.id}`} activeOpacity={0.9} onPress={() => openSearchResults(item.search)} style={styles.searchRow}>
-                            <View style={styles.rowIconWrap}>
-                                <MaterialIcons name="history" size={18} color={DiscoveryTokens.textSecondary} />
-                            </View>
-                            <Text style={styles.rowText}>{item.search}</Text>
-                        </TouchableOpacity>
-                    ))}
+                <View style={styles.emptyStateCard}>
+                    <MaterialIcons name="history" size={22} color={DiscoveryTokens.textSecondary} />
+                    <Text style={styles.emptyStateTitle}>Istoricul căutărilor nu este activ.</Text>
+                    <Text style={styles.emptyStateBody}>Nu există colecție MVP pentru căutări recente, deci nu afișăm date locale simulate.</Text>
                 </View>
             </View>
         );
@@ -260,6 +265,27 @@ const styles = StyleSheet.create({
         color: DiscoveryTokens.textPrimary,
         marginLeft: DiscoverySpacing.md,
         flex: 1,
+    },
+    rowCountText: {
+        ...Fonts.blackColor12Bold,
+        color: DiscoveryTokens.accent,
+    },
+    emptyStateCard: {
+        ...DiscoveryPrimitives.featureSurface,
+        alignItems: 'center',
+        padding: DiscoverySpacing.lg,
+    },
+    emptyStateTitle: {
+        ...Fonts.blackColor14Bold,
+        color: DiscoveryTokens.textPrimary,
+        textAlign: 'center',
+        marginTop: DiscoverySpacing.sm,
+    },
+    emptyStateBody: {
+        ...DiscoveryTypography.caption,
+        textAlign: 'center',
+        marginTop: DiscoverySpacing.xs,
+        lineHeight: 18,
     },
 });
 

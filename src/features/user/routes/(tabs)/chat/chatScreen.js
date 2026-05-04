@@ -1,11 +1,16 @@
 import React from 'react';
 import SharedChatListScreen from '../../../../shared/screens/SharedChatListScreen';
-import { userChatConversations } from '../../../../shared/data/chatConversations';
+import { useChatConversations } from '../../../../../../hooks/useChatConversations';
 
 export default function UserChatScreen() {
+  const { conversations, isLoading, error, markAllAsRead } = useChatConversations('user');
+
   return (
     <SharedChatListScreen
-      conversations={userChatConversations}
+      conversations={conversations}
+      isLoading={isLoading}
+      error={error}
+      onMarkAllAsRead={markAllAsRead}
       messageRoute="/user/message/messageScreen"
     />
   );

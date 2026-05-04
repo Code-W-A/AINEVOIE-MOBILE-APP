@@ -5,17 +5,22 @@ import { fetchProviderDirectoryList } from '../src/firebase/providerDirectorySto
 export function useProviderDirectoryList() {
   const [providers, setProviders] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState(null);
 
   const loadProviders = useCallback(async () => {
     setIsLoading(true);
+    setError(null);
 
     try {
       const nextProviders = await fetchProviderDirectoryList();
       setProviders(nextProviders);
-    } catch {
-      setProviders([]);
-    } finally {
       setIsLoading(false);
+      return nextProviders;
+    } catch (nextError) {
+      setError(nextError);
+      setProviders([]);
+      setIsLoading(false);
+      return [];
     }
   }, []);
 
@@ -27,7 +32,11 @@ export function useProviderDirectoryList() {
 
   return {
     providers,
+    data: providers,
+    list: providers,
     isLoading,
+    error,
     loadProviders,
+    reload: loadProviders,
   };
 }

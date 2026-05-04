@@ -11,16 +11,16 @@ export default function ChatConversationRow({ item, onPress }) {
       <View style={styles.contentWrap}>
         <View style={styles.topRow}>
           <View style={styles.nameRow}>
-            <Text numberOfLines={1} style={[styles.name, item.isReadable ? styles.nameUnread : null]}>
+            <Text numberOfLines={1} style={[styles.name, item.isUnread ? styles.nameUnread : null]}>
               {item.name}
             </Text>
-            {item.isReadable ? <View style={styles.unreadDot} /> : null}
+            {item.isUnread ? <View style={styles.unreadDot} /> : null}
           </View>
           <Text style={styles.seen}>{item.seen}</Text>
         </View>
 
         <View style={styles.bottomRow}>
-          <Text numberOfLines={1} style={[styles.about, item.isReadable ? styles.aboutUnread : null]}>
+          <Text numberOfLines={1} style={[styles.about, item.isUnread ? styles.aboutUnread : null]}>
             {item.about}
           </Text>
         </View>

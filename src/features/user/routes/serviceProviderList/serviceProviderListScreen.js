@@ -137,16 +137,23 @@ const ServiceProviderListScreen = () => {
             const providerDisplay = getProviderDirectoryRecord({
                 providerId: provider.providerId,
                 providerName: provider.displayName,
+                avatarUrl: provider.avatarUrl,
             });
             const serviceSummaries = Array.isArray(provider.serviceSummaries) ? provider.serviceSummaries : [];
-            const serviceCategoryKeys = Array.from(new Set(serviceSummaries.map((service) => service.categoryKey).filter(Boolean)));
-            const serviceCategoryLabels = Array.from(new Set(serviceSummaries.map((service) => (
-                service.categoryLabel || getServiceCategoryLabel(service.categoryKey, locale, provider.categoryPrimary)
-            )).filter(Boolean)));
             const primaryService = serviceSummaries[0] || null;
             const primaryCategoryKey = primaryService?.categoryKey || resolveServiceCategory(provider.categoryPrimary, locale).key;
             const primaryCategoryLabel = primaryService?.categoryLabel
                 || getServiceCategoryLabel(primaryCategoryKey, locale, provider.categoryPrimary);
+            const serviceCategoryKeys = Array.from(new Set(
+                (serviceSummaries.length ? serviceSummaries : [{ categoryKey: primaryCategoryKey }])
+                    .map((service) => service.categoryKey || primaryCategoryKey)
+                    .filter(Boolean),
+            ));
+            const serviceCategoryLabels = Array.from(new Set(
+                (serviceSummaries.length ? serviceSummaries : [{ categoryKey: primaryCategoryKey, categoryLabel: primaryCategoryLabel }])
+                    .map((service) => service.categoryLabel || getServiceCategoryLabel(service.categoryKey, locale, provider.categoryPrimary))
+                    .filter(Boolean),
+            ));
 
             return {
                 id: provider.providerId,
@@ -334,7 +341,7 @@ const ServiceProviderListScreen = () => {
 
                     <View style={styles.providerFooterRow}>
                         <View style={styles.providerPriceChip}>
-                            <Text style={styles.providerPriceChipText}>{formatHourlyRate(item.ratePerHour)}</Text>
+                            <Text style={styles.providerPriceChipText}>{formatHourlyRate(item.ratePerHour, undefined, 'Tarif nespecificat')}</Text>
                         </View>
                         <Text style={styles.providerLocationText}>{item.coverageAreaText}</Text>
                     </View>

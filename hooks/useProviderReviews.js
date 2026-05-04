@@ -10,22 +10,24 @@ export function useProviderReviews(providerId = null) {
   const canUseRemote = Boolean(resolvedProviderId && !session.configError);
   const [reviews, setReviews] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState(null);
 
   const loadReviews = useCallback(async () => {
     if (!resolvedProviderId || !canUseRemote) {
-      setReviews([]);
       setIsLoading(false);
       return [];
     }
 
+    setError(null);
     setIsLoading(true);
 
     try {
       const nextReviews = await fetchProviderReviews(resolvedProviderId);
       setReviews(nextReviews);
       return nextReviews;
-    } catch {
+    } catch (nextError) {
       setReviews([]);
+      setError(nextError);
       return [];
     } finally {
       setIsLoading(false);
@@ -49,9 +51,13 @@ export function useProviderReviews(providerId = null) {
 
   return {
     reviews,
+    data: reviews,
+    list: reviews,
     isLoading,
+    error,
     reviewCount: reviews.length,
     averageRating,
     loadReviews,
+    reload: loadReviews,
   };
 }

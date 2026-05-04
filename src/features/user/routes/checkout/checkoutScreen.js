@@ -1,160 +1,130 @@
 import React, { useMemo, useState } from 'react';
-import { Platform, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
-import { MaterialIcons, MaterialCommunityIcons } from '@expo/vector-icons';
+import { ActivityIndicator, Alert, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { MaterialCommunityIcons, MaterialIcons } from '@expo/vector-icons';
+import { useStripe } from '@stripe/stripe-react-native';
+import { useLocalSearchParams, useNavigation, useRouter } from 'expo-router';
 import MyStatusBar from '../../../../../components/myStatusBar';
 import { Colors, Fonts } from '../../../../../constant/styles';
-import { useLocalSearchParams, useNavigation, useRouter } from 'expo-router';
 import { useLocale } from '../../../../../context/localeContext';
-import { normalizeEstimatedHours, normalizeRequestDetails } from '../../../shared/utils/bookingRequestDetails';
-import { DiscoveryPrimitives, DiscoveryRadius, DiscoverySpacing, DiscoveryTypography } from '../../../shared/styles/discoverySystem';
-import { useUserPrimaryLocation } from '../../../../../hooks/useUserPrimaryLocation';
 import { useUserBookings } from '../../../../../hooks/useUserBookings';
-import { DEFAULT_MOCK_CURRENCY, formatMoney, normalizeMockCurrency } from '../../../shared/utils/mockFormatting';
-import { getProviderDisplaySnapshot } from '../../../shared/utils/providerDirectory';
-
-function parseNumber(value) {
-  const next = Number(value);
-  return Number.isFinite(next) ? next : 0;
-}
+import { completeDemoPayment, createStripePaymentSheetSession } from '../../../../firebase/bookings';
+import { isPaymentDemoModeEnabled } from '../../../shared/config/featureFlags';
+import { DiscoveryPrimitives, DiscoveryRadius, DiscoverySpacing, DiscoveryTypography } from '../../../shared/styles/discoverySystem';
+import { normalizeEstimatedHours } from '../../../shared/utils/bookingRequestDetails';
+import { formatMoney } from '../../../shared/utils/mockFormatting';
 
 function formatEstimatedHoursLabel(hours, t) {
   const safeHours = normalizeEstimatedHours(hours);
   return safeHours === 1 ? t('serviceRequest.oneHour') : t('serviceRequest.multipleHours', { hours: safeHours });
 }
 
-function buildWalletAvailability() {
-  return {
-    applePay: Platform.OS === 'ios',
-    googlePay: Platform.OS === 'android',
-  };
-}
-
 export default function CheckoutScreen() {
   const navigation = useNavigation();
   const router = useRouter();
   const params = useLocalSearchParams();
+  const { initPaymentSheet, presentPaymentSheet } = useStripe();
   const { t } = useLocale();
-  const { location } = useUserPrimaryLocation();
-  const { getBookingById, updateBookingPayment, createBooking } = useUserBookings();
+  const { getBookingById, isLoading, reload } = useUserBookings();
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const isDemoPaymentMode = isPaymentDemoModeEnabled();
 
   const bookingId = typeof params.bookingId === 'string' ? params.bookingId : null;
-  const existingBooking = bookingId ? getBookingById(bookingId) : null;
-  const requestKey = useMemo(
-    () => (typeof params.requestKey === 'string' && params.requestKey ? params.requestKey : `req_${Date.now()}`),
-    [params.requestKey],
+  const booking = bookingId ? getBookingById(bookingId) : null;
+  const totalLabel = useMemo(
+    () => formatMoney(booking?.price?.amount ?? 0, booking?.price?.currency),
+    [booking?.price?.amount, booking?.price?.currency],
   );
-
-  const walletAvailability = buildWalletAvailability();
-
-  const draft = useMemo(() => {
-    if (existingBooking) {
-      return {
-        providerId: existingBooking.providerId,
-        providerName: existingBooking.providerName,
-        providerRole: existingBooking.providerRole,
-        providerImage: existingBooking.providerImage,
-        serviceId: existingBooking.serviceId,
-        serviceName: existingBooking.serviceName,
-        scheduledDateKey: existingBooking.scheduledDateKey,
-        scheduledStartTime: existingBooking.scheduledStartTime,
-        timezone: existingBooking.timezone,
-        dateLabel: existingBooking.dateLabel,
-        timeLabel: existingBooking.timeLabel,
-        address: existingBooking.address,
-        price: existingBooking.price,
-        requestDetails: existingBooking.requestDetails,
-        bookingStatus: existingBooking.bookingStatus,
-        requestKey: existingBooking.requestKey || requestKey,
-      };
-    }
-
-    const providerSnapshot = getProviderDisplaySnapshot({
-      providerId: typeof params.providerId === 'string' ? params.providerId : '',
-      providerName: typeof params.providerName === 'string' ? params.providerName : 'Prestator',
-      providerRole: typeof params.providerRole === 'string' ? params.providerRole : 'Serviciu',
-    });
-    const serviceName = typeof params.serviceName === 'string' ? params.serviceName : 'Serviciu';
-    const dateLabel = typeof params.dateLabel === 'string' ? params.dateLabel : 'Astăzi';
-    const timeLabel = typeof params.timeLabel === 'string' ? params.timeLabel : '10:00 AM';
-    const address = typeof params.address === 'string'
-      ? params.address
-      : (location?.formattedAddress || '—');
-    const currency = normalizeMockCurrency(typeof params.currency === 'string' ? params.currency : DEFAULT_MOCK_CURRENCY);
-    const ratePerHour = parseNumber(params.ratePerHour);
-    const estimatedHours = normalizeEstimatedHours(params.estimatedHours);
-    const amount = parseNumber(params.amount) || ratePerHour * estimatedHours;
-    const requestDetails = normalizeRequestDetails({
-      description: typeof params.requestDescription === 'string' ? params.requestDescription : '',
-      estimatedHours,
-    }, estimatedHours);
-
-    return {
-      providerId: providerSnapshot.providerId,
-      providerName: providerSnapshot.providerName,
-      providerRole: providerSnapshot.providerRole,
-      providerImage: providerSnapshot.providerImage,
-      serviceId: typeof params.serviceId === 'string' ? params.serviceId : '',
-      serviceName,
-      scheduledDateKey: typeof params.scheduledDateKey === 'string' ? params.scheduledDateKey : '',
-      scheduledStartTime: typeof params.scheduledStartTime === 'string' ? params.scheduledStartTime : '',
-      timezone: typeof params.timezone === 'string' ? params.timezone : 'Europe/Bucharest',
-      dateLabel,
-      timeLabel,
-      address,
-      price: {
-        amount,
-        currency,
-        unit: 'oră',
-        estimatedHours,
-      },
-      requestDetails,
-      bookingStatus: 'upcoming',
-      requestKey,
-    };
-  }, [existingBooking, location?.formattedAddress, params, requestKey, t]);
-
-  const [selectedMethod, setSelectedMethod] = useState('card');
-  const [isSubmitting, setIsSubmitting] = useState(false);
-  const totalLabel = formatMoney(draft.price?.amount ?? 0, draft.price?.currency);
-
-  const isApplePayDisabled = !walletAvailability.applePay;
-  const isGooglePayDisabled = !walletAvailability.googlePay;
-
-  const isPayDisabled = selectedMethod === 'apple_pay' ? isApplePayDisabled : selectedMethod === 'google_pay' ? isGooglePayDisabled : false;
+  const canPay = booking?.lifecycleStatus === 'confirmed'
+    && ['unpaid', 'failed'].includes(booking?.payment?.status);
 
   async function handlePayPress() {
-    if (isPayDisabled || isSubmitting) {
+    if (!bookingId || !canPay || isSubmitting) {
       return;
     }
 
     setIsSubmitting(true);
 
     try {
-      if (selectedMethod === 'card') {
-        const nextParams = buildCheckoutParams(draft, bookingId);
-        router.push({ pathname: '/user/paymentMethod/paymentMethodScreen', params: nextParams });
+      if (isDemoPaymentMode) {
+        await completeDemoPayment(bookingId);
+        await reload();
+        router.replace({
+          pathname: '/user/paymentStatus/paymentStatusScreen',
+          params: {
+            bookingId,
+            processing: '1',
+          },
+        });
         return;
       }
 
-      const payload = {
-        status: 'in_progress',
-        method: selectedMethod,
-      };
+      const session = await createStripePaymentSheetSession(bookingId);
+      const { error: initError } = await initPaymentSheet({
+        merchantDisplayName: 'AI Nevoie',
+        paymentIntentClientSecret: session.paymentIntentClientSecret,
+        returnURL: 'ainevoie://stripe-redirect',
+        allowsDelayedPaymentMethods: false,
+        applePay: {
+          merchantCountryCode: 'RO',
+        },
+        googlePay: {
+          merchantCountryCode: 'RO',
+          testEnv: __DEV__,
+        },
+      });
 
-      const nextBooking = bookingId
-        ? await updateBookingPayment(bookingId, payload)
-        : await createBooking({ draft, payment: payload });
+      if (initError) {
+        throw new Error(initError.message || t('payment.errorUnknown'));
+      }
 
+      const { error: presentError } = await presentPaymentSheet();
+
+      if (presentError) {
+        if (presentError.code !== 'Canceled') {
+          throw new Error(presentError.message || t('payment.errorUnknown'));
+        }
+        return;
+      }
+
+      await reload();
       router.replace({
         pathname: '/user/paymentStatus/paymentStatusScreen',
         params: {
-          bookingId: nextBooking.id,
-          paymentOutcome: 'success',
+          bookingId,
+          processing: '1',
         },
       });
+    } catch (error) {
+      Alert.alert(t('payment.errorTitle'), error?.message || t('payment.errorUnknown'));
     } finally {
       setIsSubmitting(false);
     }
+  }
+
+  if (isLoading || (bookingId && !booking)) {
+    return (
+      <View style={styles.screen}>
+        <MyStatusBar backgroundColor={Colors.discoveryDarkColor} />
+        <View style={styles.centeredWrap}>
+          <ActivityIndicator size="large" color={Colors.discoveryAccentColor} />
+          <Text style={styles.loadingText}>{t('payment.generating')}</Text>
+        </View>
+      </View>
+    );
+  }
+
+  if (!bookingId || !booking) {
+    return (
+      <View style={styles.screen}>
+        <MyStatusBar backgroundColor={Colors.discoveryDarkColor} />
+        <View style={styles.centeredWrap}>
+          <Text style={styles.unavailableTitle}>{t('payment.unavailable')}</Text>
+          <TouchableOpacity activeOpacity={0.92} onPress={() => router.replace('/user/(tabs)/booking/bookingScreen')} style={styles.payButton}>
+            <Text style={styles.payButtonText}>{t('payment.continue')}</Text>
+          </TouchableOpacity>
+        </View>
+      </View>
+    );
   }
 
   return (
@@ -204,39 +174,14 @@ export default function CheckoutScreen() {
       <View style={styles.card}>
         <Text style={styles.cardTitle}>{t('checkout.summaryTitle')}</Text>
         <View style={{ marginTop: DiscoverySpacing.lg }}>
-          {summaryRow({ icon: 'person', label: t('checkout.provider'), value: `${draft.providerName} · ${draft.providerRole}` })}
-          {summaryRow({ icon: 'work', label: t('checkout.service'), value: draft.serviceName })}
-          {summaryRow({ icon: 'event', label: t('checkout.dateTime'), value: `${draft.dateLabel} · ${draft.timeLabel}` })}
-          {summaryRow({ icon: 'place', label: t('checkout.address'), value: draft.address })}
-          {summaryRow({ icon: 'schedule', label: t('checkout.duration'), value: formatEstimatedHoursLabel(draft.requestDetails?.estimatedHours || draft.price?.estimatedHours, t) })}
-          {summaryRow({ icon: 'description', label: t('checkout.requestDescription'), value: draft.requestDetails?.description || t('checkout.noDetails') })}
+          {summaryRow({ icon: 'person', label: t('checkout.provider'), value: `${booking.providerName} · ${booking.providerRole}` })}
+          {summaryRow({ icon: 'work', label: t('checkout.service'), value: booking.serviceName })}
+          {summaryRow({ icon: 'event', label: t('checkout.dateTime'), value: `${booking.dateLabel} · ${booking.timeLabel}` })}
+          {summaryRow({ icon: 'place', label: t('checkout.address'), value: booking.address })}
+          {summaryRow({ icon: 'schedule', label: t('checkout.duration'), value: formatEstimatedHoursLabel(booking.requestDetails?.estimatedHours || booking.price?.estimatedHours, t) })}
+          {summaryRow({ icon: 'description', label: t('checkout.requestDescription'), value: booking.requestDetails?.description || t('checkout.noDetails') })}
         </View>
       </View>
-    );
-  }
-
-  function methodRow({ id, title, subtitle, icon, disabled }) {
-    const isSelected = selectedMethod === id;
-    return (
-      <TouchableOpacity
-        activeOpacity={0.92}
-        disabled={disabled}
-        onPress={() => setSelectedMethod(id)}
-        style={[
-          styles.methodRow,
-          isSelected ? styles.methodRowSelected : null,
-          disabled ? styles.methodRowDisabled : null,
-        ]}
-      >
-        <View style={[styles.methodIconWrap, isSelected ? styles.methodIconWrapSelected : null]}>
-          <MaterialCommunityIcons name={icon} size={20} color={isSelected ? Colors.whiteColor : Colors.discoveryMutedColor} />
-        </View>
-        <View style={{ flex: 1, marginLeft: DiscoverySpacing.md }}>
-          <Text style={styles.methodTitle}>{title}</Text>
-          <Text style={styles.methodSubtitle}>{subtitle}</Text>
-        </View>
-        {isSelected ? <MaterialIcons name="check" size={18} color={Colors.discoveryAccentColor} /> : null}
-      </TouchableOpacity>
     );
   }
 
@@ -244,36 +189,24 @@ export default function CheckoutScreen() {
     return (
       <View style={[styles.card, { marginTop: DiscoverySpacing.xl }]}>
         <Text style={styles.cardTitle}>{t('checkout.paymentMethodTitle')}</Text>
-        <View style={{ marginTop: DiscoverySpacing.lg }}>
-          {methodRow({
-            id: 'card',
-            title: t('payment.card'),
-            subtitle: t('checkout.cardSubtitle'),
-            icon: 'credit-card-outline',
-            disabled: false,
-          })}
-          {methodRow({
-            id: 'apple_pay',
-            title: 'Apple Pay',
-            subtitle: walletAvailability.applePay ? t('checkout.applePaySubtitle') : t('checkout.applePayDisabled'),
-            icon: 'apple',
-            disabled: isApplePayDisabled,
-          })}
-          {methodRow({
-            id: 'google_pay',
-            title: 'Google Pay',
-            subtitle: walletAvailability.googlePay ? t('checkout.googlePaySubtitle') : t('checkout.googlePayDisabled'),
-            icon: 'google',
-            disabled: isGooglePayDisabled,
-          })}
+        <View style={styles.stripeMethodWrap}>
+          <View style={styles.methodIconWrap}>
+            <MaterialCommunityIcons name="credit-card-outline" size={22} color={Colors.whiteColor} />
+          </View>
+          <View style={{ flex: 1, marginLeft: DiscoverySpacing.md }}>
+            <Text style={styles.methodTitle}>{isDemoPaymentMode ? t('checkout.demoPaymentTitle') : 'Stripe PaymentSheet'}</Text>
+            <Text style={styles.methodSubtitle}>
+              {isDemoPaymentMode ? t('checkout.demoPaymentSubtitle') : t('checkout.stripeSheetSubtitle')}
+            </Text>
+          </View>
         </View>
       </View>
     );
   }
 
   function totalCard() {
-    const hours = draft.price?.estimatedHours ?? normalizeEstimatedHours(draft.requestDetails?.estimatedHours);
-    const amount = draft.price?.amount ?? 0;
+    const hours = booking.price?.estimatedHours ?? normalizeEstimatedHours(booking.requestDetails?.estimatedHours);
+    const amount = booking.price?.amount ?? 0;
 
     return (
       <View style={[styles.card, { marginTop: DiscoverySpacing.xl }]}>
@@ -285,7 +218,7 @@ export default function CheckoutScreen() {
           </View>
           <View style={styles.totalRow}>
             <Text style={styles.totalLabel}>{t('checkout.totalToPay')}</Text>
-            <Text style={styles.totalValueStrong}>{formatMoney(amount, draft.price?.currency)}</Text>
+            <Text style={styles.totalValueStrong}>{formatMoney(amount, booking.price?.currency)}</Text>
           </View>
         </View>
       </View>
@@ -299,50 +232,39 @@ export default function CheckoutScreen() {
           <Text style={styles.footerMetaLabel}>{t('payment.total')}</Text>
           <Text style={styles.footerMetaValue}>{totalLabel}</Text>
         </View>
+        {!canPay ? (
+          <Text style={styles.disabledReason}>{t('checkout.confirmedOnly')}</Text>
+        ) : null}
         <TouchableOpacity
           activeOpacity={0.92}
-          disabled={isPayDisabled || isSubmitting}
+          disabled={!canPay || isSubmitting}
           onPress={() => { void handlePayPress(); }}
-          style={[styles.payButton, isPayDisabled || isSubmitting ? styles.payButtonDisabled : null]}
+          style={[styles.payButton, !canPay || isSubmitting ? styles.payButtonDisabled : null]}
         >
-          <Text style={styles.payButtonText}>{t('checkout.pay')}</Text>
+          <Text style={styles.payButtonText}>{isSubmitting ? t('payment.processing') : t('checkout.pay')}</Text>
         </TouchableOpacity>
       </View>
     );
   }
 }
 
-function buildCheckoutParams(draft, bookingId) {
-  const params = {
-    providerId: draft.providerId,
-    providerName: draft.providerName,
-    providerRole: draft.providerRole,
-    serviceId: draft.serviceId || '',
-    serviceName: draft.serviceName,
-    scheduledDateKey: draft.scheduledDateKey || '',
-    scheduledStartTime: draft.scheduledStartTime || '',
-    timezone: draft.timezone || 'Europe/Bucharest',
-    dateLabel: draft.dateLabel,
-    timeLabel: draft.timeLabel,
-    address: draft.address,
-    amount: String(draft.price?.amount ?? 0),
-    currency: draft.price?.currency ?? DEFAULT_MOCK_CURRENCY,
-    estimatedHours: String(draft.price?.estimatedHours ?? normalizeEstimatedHours(draft.requestDetails?.estimatedHours)),
-    ratePerHour: String(parseNumber(draft.price?.amount ?? 0) / (parseNumber(draft.price?.estimatedHours ?? normalizeEstimatedHours(draft.requestDetails?.estimatedHours)) || normalizeEstimatedHours(draft.requestDetails?.estimatedHours))),
-    requestDescription: draft.requestDetails?.description || '',
-    requestKey: draft.requestKey || '',
-  };
-
-  if (bookingId) {
-    params.bookingId = bookingId;
-  }
-
-  return params;
-}
-
 const styles = StyleSheet.create({
   screen: {
     ...DiscoveryPrimitives.screen,
+  },
+  centeredWrap: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: DiscoverySpacing.xl,
+  },
+  loadingText: {
+    ...DiscoveryTypography.bodyMuted,
+    marginTop: DiscoverySpacing.md,
+  },
+  unavailableTitle: {
+    ...Fonts.blackColor18Bold,
+    marginBottom: DiscoverySpacing.xl,
   },
   headerWrap: {
     ...DiscoveryPrimitives.headerSurface,
@@ -391,30 +313,17 @@ const styles = StyleSheet.create({
     marginTop: 4,
     lineHeight: 20,
   },
-  methodRow: {
+  stripeMethodWrap: {
     ...DiscoveryPrimitives.listItemRow,
-    marginBottom: DiscoverySpacing.md,
-  },
-  methodRowSelected: {
-    borderColor: 'rgba(211,84,0,0.35)',
-    backgroundColor: 'rgba(211,84,0,0.04)',
-  },
-  methodRowDisabled: {
-    opacity: 0.55,
+    marginTop: DiscoverySpacing.lg,
   },
   methodIconWrap: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
+    width: 42,
+    height: 42,
+    borderRadius: 21,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: Colors.discoverySoftSurfaceColor,
-    borderWidth: 1,
-    borderColor: Colors.discoveryBorderColor,
-  },
-  methodIconWrapSelected: {
     backgroundColor: Colors.discoveryAccentColor,
-    borderColor: Colors.discoveryAccentColor,
   },
   methodTitle: {
     ...Fonts.blackColor14Bold,
@@ -460,6 +369,10 @@ const styles = StyleSheet.create({
   },
   footerMetaValue: {
     ...Fonts.blackColor18Bold,
+  },
+  disabledReason: {
+    ...DiscoveryTypography.caption,
+    marginBottom: DiscoverySpacing.md,
   },
   payButton: {
     ...DiscoveryPrimitives.primaryButton,

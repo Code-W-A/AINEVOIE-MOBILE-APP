@@ -1,8 +1,10 @@
 import { useFonts } from 'expo-font';
 import { Stack, useRouter, useSegments } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
+import * as Sentry from '@sentry/react-native';
 import { useEffect } from 'react';
 import { AppState, LogBox, StatusBar } from 'react-native';
+import { StripeProvider } from '@stripe/stripe-react-native';
 import { LocaleProvider, useLocale } from '../context/localeContext';
 import { SessionProvider, useSession } from '../context/sessionContext';
 import { OnboardingProvider, useOnboarding } from '../context/onboardingContext';
@@ -14,6 +16,24 @@ import {
   isLegacyUserSegment,
 } from '../utils/roleRoutes';
 import { FORCE_ONBOARDING_ENTRY } from '../utils/devFlags';
+
+const sentryEnvironment = process.env.EXPO_PUBLIC_APP_ENV || (__DEV__ ? 'development' : 'production');
+const sentryDsn = process.env.EXPO_PUBLIC_SENTRY_DSN;
+const isSentryEnabled = Boolean(sentryDsn);
+const stripePublishableKey = process.env.EXPO_PUBLIC_STRIPE_PUBLISHABLE_KEY || '';
+const stripeMerchantIdentifier = process.env.EXPO_PUBLIC_STRIPE_MERCHANT_IDENTIFIER || 'merchant.com.ainevoie.nrb';
+
+Sentry.init({
+  dsn: sentryDsn,
+  enabled: isSentryEnabled,
+  environment: sentryEnvironment,
+  sendDefaultPii: true,
+  enableLogs: true,
+  // Sentry's ExpoUpdatesListener requires optional expo-updates; this app
+  // does not install it, so Metro emits an unresolved numeric module in dev.
+  integrations: (defaultIntegrations) =>
+    defaultIntegrations.filter((integration) => integration.name !== 'ExpoUpdatesListener'),
+});
 
 LogBox.ignoreAllLogs();
 
@@ -35,7 +55,7 @@ function RouteGuard() {
       return;
     }
 
-    const [firstSegment, secondSegment] = segments;
+    const [firstSegment, secondSegment, thirdSegment] = segments;
     const isAuthRoute = firstSegment === 'auth';
     const isProviderAuthRoute = firstSegment === 'provider' && secondSegment === 'auth';
     const isUserRoute = firstSegment === 'user';
@@ -45,6 +65,9 @@ function RouteGuard() {
     const isUserOnboardingRoute = isAuthRoute && secondSegment === 'userOnboardingScreen';
     const isProviderOnboardingRoute = isAuthRoute && secondSegment === 'providerOnboardingScreen';
     const isUserLocationSetupRoute = isAuthRoute && secondSegment === 'userLocationSetupScreen';
+    const isProviderAvailabilitySetupRoute = firstSegment === 'provider'
+      && secondSegment === 'availability'
+      && thirdSegment === 'providerAvailabilityScreen';
 
     let redirectPath = null;
 
@@ -81,7 +104,7 @@ function RouteGuard() {
       }
     } else if (activeRole === 'provider') {
       if (providerStatus === 'pre_registered') {
-        if (!isProviderOnboardingRoute) {
+        if (!isProviderOnboardingRoute && !isProviderAvailabilitySetupRoute) {
           redirectPath = getAuthenticatedEntryRoute(session);
         }
       } else if (isAuthRoute || isProviderAuthRoute || isUserRoute || isLegacyUserRoute) {
@@ -153,14 +176,22 @@ function RootNavigator() {
   );
 }
 
-export default function RootLayout() {
+function RootLayout() {
   return (
-    <SessionProvider>
-      <LocaleProvider>
-        <OnboardingProvider>
-          <RootNavigator />
-        </OnboardingProvider>
-      </LocaleProvider>
-    </SessionProvider>
+    <StripeProvider
+      publishableKey={stripePublishableKey}
+      merchantIdentifier={stripeMerchantIdentifier}
+      urlScheme="ainevoie"
+    >
+      <SessionProvider>
+        <LocaleProvider>
+          <OnboardingProvider>
+            <RootNavigator />
+          </OnboardingProvider>
+        </LocaleProvider>
+      </SessionProvider>
+    </StripeProvider>
   );
 }
+
+export default Sentry.wrap(RootLayout);

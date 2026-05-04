@@ -9,9 +9,15 @@ import {
     AinevoieDiscoveryTokens as DiscoveryTokens,
     AinevoieDiscoveryTypography as DiscoveryTypography,
 } from "../../../../shared/styles/discoverySystem";
-import { formatMoney } from "../../../../shared/utils/mockFormatting";
+import { FEATURES } from "../../../../shared/config/featureFlags";
 
 const WalletScreen = () => {
+    const isUnavailable = !FEATURES.wallet;
+
+    if (!isUnavailable) {
+        return null;
+    }
+
     return (
         <View style={styles.screen}>
             <MyStatusBar backgroundColor={DiscoveryTokens.statusBarBackground} barStyle="dark-content" />
@@ -33,7 +39,7 @@ const WalletScreen = () => {
                     <Text style={styles.eyebrowPillText}>Portofel</Text>
                 </View>
                 <Text style={styles.headerTitle}>Credit AI Nevoie</Text>
-                <Text style={styles.headerSubtitle}>Gestionează rapid creditul și invitațiile tale.</Text>
+                <Text style={styles.headerSubtitle}>Portofelul și recomandările nu au încă model Firebase în MVP.</Text>
             </View>
         );
     }
@@ -44,19 +50,19 @@ const WalletScreen = () => {
                 <View style={styles.heroCardTopRow}>
                     <View>
                         <Text style={styles.heroLabel}>Credit disponibil</Text>
-                        <Text style={styles.cashValue}>{formatMoney(15)}</Text>
+                        <Text style={styles.cashValue}>0 RON</Text>
                     </View>
                     <View style={styles.heroIconWrapStyle}>
                         <MaterialCommunityIcons name="wallet-outline" size={26} color={DiscoveryTokens.accentDark} />
                     </View>
                 </View>
-                <Text style={styles.cashSupport}>Folosește creditul la următoarea rezervare eligibilă.</Text>
+                <Text style={styles.cashSupport}>Nu afișăm valori locale simulate. Creditul va fi conectat când există colecția reală pentru wallet.</Text>
                 <View style={styles.heroMetaRow}>
                     <View style={styles.heroMetaChipStyle}>
-                        <MaterialIcons name="bolt" size={16} color={DiscoveryTokens.accentDark} />
-                        <Text style={styles.heroMetaChipText}>Aplicare automată</Text>
+                        <MaterialIcons name="lock-outline" size={16} color={DiscoveryTokens.accentDark} />
+                        <Text style={styles.heroMetaChipText}>Indisponibil în MVP</Text>
                     </View>
-                    <Text style={styles.heroMetaQuietText}>Disponibil acum</Text>
+                    <Text style={styles.heroMetaQuietText}>0 activ</Text>
                 </View>
             </View>
         );
@@ -65,9 +71,9 @@ const WalletScreen = () => {
     function shareCodeInfo() {
         return (
             <View style={styles.contentCard}>
-                <Text style={styles.sectionTitle}>Distribuie codul și economisește minim 25%</Text>
+                <Text style={styles.sectionTitle}>Programul de recomandări este dezactivat</Text>
                 <Text style={styles.sectionBody}>
-                    Prietenul tău primește {formatMoney(5)} credit AI Nevoie la înscriere. Tu primești {formatMoney(5)} după prima rezervare eligibilă de minimum {formatMoney(15)}.
+                    Nu există colecție reală pentru referral în batch-ul MVP, deci nu afișăm beneficii, procente sau coduri generate local.
                 </Text>
             </View>
         );
@@ -77,24 +83,24 @@ const WalletScreen = () => {
         return (
             <View style={styles.contentCard}>
                 <Text style={styles.sectionTitle}>Codul tău de recomandare</Text>
-                <Text style={styles.sectionBody}>Trimite codul direct sau copiază-l pentru a-l partaja oriunde.</Text>
+                <Text style={styles.sectionBody}>Codul va fi disponibil după implementarea modelului Firebase pentru referral.</Text>
 
                 <View style={styles.referralCodeWrapStyle}>
                     <View>
                         <Text style={styles.referralCodeLabel}>Cod activ</Text>
-                        <Text style={styles.referralCodeText}>AINEVOIE15</Text>
+                        <Text style={styles.referralCodeText}>Indisponibil</Text>
                     </View>
-                    <TouchableOpacity activeOpacity={0.9} style={styles.copyButtonStyle}>
-                        <MaterialIcons name="content-copy" size={20} color={DiscoveryTokens.accentDark} />
+                    <TouchableOpacity activeOpacity={1} disabled style={[styles.copyButtonStyle, styles.disabledActionStyle]}>
+                        <MaterialIcons name="content-copy" size={20} color={DiscoveryTokens.textMuted} />
                     </TouchableOpacity>
                 </View>
 
                 <View style={styles.shareOptionsWrapStyle}>
-                    <TouchableOpacity activeOpacity={0.9} style={styles.primaryActionButtonStyle}>
+                    <TouchableOpacity activeOpacity={1} disabled style={[styles.primaryActionButtonStyle, styles.disabledActionStyle]}>
                         <Text style={styles.primaryActionText}>WhatsApp</Text>
                         <MaterialCommunityIcons name="whatsapp" size={22} color={DiscoveryTokens.textOnImage} />
                     </TouchableOpacity>
-                    <TouchableOpacity activeOpacity={0.9} style={styles.secondaryActionButtonStyle}>
+                    <TouchableOpacity activeOpacity={1} disabled style={[styles.secondaryActionButtonStyle, styles.disabledActionStyle]}>
                         <Text style={styles.secondaryActionText}>Mai multe opțiuni</Text>
                         <MaterialIcons name="share" size={20} color={DiscoveryTokens.brandDark} />
                     </TouchableOpacity>
@@ -199,7 +205,7 @@ const styles = StyleSheet.create({
     cashSupport: {
         ...DiscoveryTypography.bodyMuted,
         marginTop: DiscoverySpacing.md,
-        maxWidth: '82%',
+        maxWidth: '86%',
     },
     heroMetaRow: {
         flexDirection: 'row',
@@ -307,6 +313,9 @@ const styles = StyleSheet.create({
     secondaryActionText: {
         ...DiscoveryTypography.body,
         color: DiscoveryTokens.brandDark,
+    },
+    disabledActionStyle: {
+        opacity: 0.45,
     },
 });
 

@@ -11,11 +11,16 @@ import {
   sharedBottomTabScreenOptions,
 } from '../../shared/navigation/bottomTabSystem';
 import { getProviderBottomTabs } from '../../shared/navigation/tabConfig';
+import { useProviderBookings } from '../../../../hooks/useProviderBookings';
 
 export default function ProviderTabsLayout() {
   const backClickCount = useDoubleBackExit();
   const { t } = useLocale();
-  const providerBottomTabs = getProviderBottomTabs(t);
+  const { requestBookings } = useProviderBookings();
+  const providerBottomTabs = getProviderBottomTabs(t, {
+    requestCount: requestBookings.length,
+    unreadChatCount: 0,
+  });
 
   return (
     <View style={{ flex: 1 }}>

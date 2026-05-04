@@ -11,8 +11,6 @@ import {
   sanitizeString,
 } from './shared';
 import { writeStructuredLog } from './logging';
-import { hasCompleteCoverageArea } from './providerCoverage';
-import { fetchProviderAvailabilityProfile, hasConfiguredAvailability } from './providerAvailability';
 
 type AdminReviewProviderPayload = {
   providerId?: string,
@@ -25,34 +23,21 @@ type AdminReviewDeps = {
   auth: Auth,
 };
 
-function hasUploadedDocuments(providerData: Record<string, any>) {
-  return providerData.documents?.identity?.status === 'uploaded'
-    && sanitizeString(providerData.documents?.identity?.storagePath)
-    && providerData.documents?.professional?.status === 'uploaded'
-    && sanitizeString(providerData.documents?.professional?.storagePath);
-}
-
-function hasCompleteProfessionalProfile(providerData: Record<string, any>) {
-  const profile = providerData.professionalProfile || {};
-  const baseRateAmount = Number(profile.baseRateAmount);
-
-  return Boolean(
-    sanitizeString(profile.businessName)
-    && sanitizeString(profile.displayName)
-    && sanitizeString(profile.specialization)
-    && hasCompleteCoverageArea(profile.coverageArea)
-    && sanitizeString(profile.shortBio)
-    && Number.isFinite(baseRateAmount)
-    && baseRateAmount > 0,
-  );
-}
-
 function resolveNextProviderStatus(currentStatus: string, action: string) {
-  if (action === PROVIDER_REVIEW_ACTIONS.APPROVE && currentStatus === PROVIDER_STATUSES.PENDING_REVIEW) {
+  const isApprovableStatus = [
+    PROVIDER_STATUSES.PRE_REGISTERED,
+    PROVIDER_STATUSES.PENDING_REVIEW,
+    PROVIDER_STATUSES.REJECTED,
+    'new',
+    'in_review',
+  ].includes(currentStatus);
+  const isRejectableStatus = currentStatus === PROVIDER_STATUSES.PENDING_REVIEW || currentStatus === 'in_review';
+
+  if (action === PROVIDER_REVIEW_ACTIONS.APPROVE && isApprovableStatus) {
     return PROVIDER_STATUSES.APPROVED;
   }
 
-  if (action === PROVIDER_REVIEW_ACTIONS.REJECT && currentStatus === PROVIDER_STATUSES.PENDING_REVIEW) {
+  if (action === PROVIDER_REVIEW_ACTIONS.REJECT && isRejectableStatus) {
     return PROVIDER_STATUSES.REJECTED;
   }
 
@@ -102,19 +87,6 @@ export async function adminReviewProviderService(
 
   if (!nextStatus) {
     throw failedPrecondition('Invalid provider status transition.');
-  }
-
-  const availabilityProfile = await fetchProviderAvailabilityProfile({ db }, providerId);
-
-  if (
-    nextStatus === PROVIDER_STATUSES.APPROVED
-    && (
-      !hasCompleteProfessionalProfile(providerData)
-      || !hasUploadedDocuments(providerData)
-      || !hasConfiguredAvailability(availabilityProfile.weekSchedule)
-    )
-  ) {
-    throw failedPrecondition('Provider profile is incomplete and cannot be approved.');
   }
 
   await providerRef.set({

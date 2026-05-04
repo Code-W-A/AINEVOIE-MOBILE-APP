@@ -38,6 +38,16 @@
       "favicon": "./assets/images/favicon.png"
     },
     "plugins": [
+      [
+        "expo-build-properties",
+        {
+          "android": {
+            "compileSdkVersion": 36,
+            "targetSdkVersion": 35,
+            "buildToolsVersion": "36.0.0"
+          }
+        }
+      ],
       "expo-router",
       [
         "expo-splash-screen",
@@ -54,8 +64,31 @@
           "locationWhenInUsePermission": "AI Nevoie folosește locația pentru a seta adresa ta principală și pentru navigație corectă către client."
         }
       ],
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "AI Nevoie folosește galeria pentru a selecta poza de profil.",
+          "cameraPermission": "AI Nevoie folosește camera pentru a face poza de profil.",
+          "microphonePermission": false
+        }
+      ],
+      [
+        "@stripe/stripe-react-native",
+        {
+          "merchantIdentifier": "merchant.com.ainevoie.nrb",
+          "enableGooglePay": true
+        }
+      ],
       "expo-font",
-      "expo-web-browser"
+      "expo-web-browser",
+      [
+        "@sentry/react-native/expo",
+        {
+          "url": "https://sentry.io/",
+          "organization": "popescu-pompiliu-ion-pfa",
+          "project": "ai-nevoie-expo-reactnative"
+        }
+      ]
     ],
     "experiments": {
       "typedRoutes": true

@@ -45,7 +45,6 @@ function normalizeBlockedDate(blockedDate, index = 0) {
     return {
         id: (0, shared_1.sanitizeString)(source.id) || `blocked_${index}`,
         dateKey: (0, shared_1.sanitizeString)(source.dateKey),
-        note: (0, shared_1.sanitizeString)(source.note),
         createdAt: source.createdAt || null,
     };
 }

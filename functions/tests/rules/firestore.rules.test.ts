@@ -257,11 +257,10 @@ describe('firestore rules', () => {
     }));
   });
 
-  it('blocks direct client writes to the availability profile subdocument', async () => {
+  it('allows providers to manage their own availability profile and blocks non-owners', async () => {
     const db = testEnv.authenticatedContext('provider_1').firestore();
     const availabilityRef = doc(db, 'providers/provider_1/availability/profile');
-
-    await assertFails(setDoc(availabilityRef, {
+    const payload = {
       weekSchedule: [
         {
           dayKey: 'monday',
@@ -276,7 +275,12 @@ describe('firestore rules', () => {
       availabilityDayChips: ['Luni'],
       hasConfiguredAvailability: true,
       updatedAt: serverTimestamp(),
-    }));
+    };
+
+    await assertSucceeds(setDoc(availabilityRef, payload));
+
+    const otherDb = testEnv.authenticatedContext('user_1').firestore();
+    await assertFails(setDoc(doc(otherDb, 'providers/provider_1/availability/profile'), payload));
   });
 
   it('allows a provider to create and update their own service documents', async () => {

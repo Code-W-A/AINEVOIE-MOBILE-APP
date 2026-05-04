@@ -50,7 +50,6 @@ function normalizeBlockedDate(blockedDate: unknown, index = 0) {
   return {
     id: sanitizeString(source.id) || `blocked_${index}`,
     dateKey: sanitizeString(source.dateKey),
-    note: sanitizeString(source.note),
     createdAt: source.createdAt || null,
   };
 }

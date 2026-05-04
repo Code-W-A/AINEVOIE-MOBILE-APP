@@ -32,7 +32,7 @@ const BookingScccessScreen = () => {
             <View style={styles.contentWrap}>
                 <View style={styles.successCard}>
                     <View style={DiscoveryPrimitives.badge}>
-                        <Text style={styles.badgeText}>Confirmat</Text>
+                        <Text style={styles.badgeText}>Trimisă</Text>
                     </View>
                     {bookingSuccessImage()}
                     {bookingSuccessText()}
@@ -57,9 +57,9 @@ const BookingScccessScreen = () => {
     function bookingSuccessText() {
         return (
             <View>
-                <Text style={styles.successTitle}>Rezervare confirmată</Text>
+                <Text style={styles.successTitle}>Cererea a fost trimisă</Text>
                 <Text style={styles.successSubtitle}>
-                    Îți mulțumim pentru rezervare. Un reprezentant AI Nevoie te va contacta în scurt timp.
+                    Prestatorul o va confirma sau va propune o modificare. Plata devine disponibilă după confirmare.
                 </Text>
             </View>
         );

@@ -12,6 +12,8 @@ export const PAYMENT_METHODS = {
   card: 'card',
   apple_pay: 'apple_pay',
   google_pay: 'google_pay',
+  demo: 'demo',
+  unknown: 'unknown',
 };
 
 export function normalizePaymentStatus(status) {
@@ -87,6 +89,14 @@ export function getPaymentMethodLabel(method, last4) {
 
   if (normalizedMethod === PAYMENT_METHODS.google_pay) {
     return 'Google Pay';
+  }
+
+  if (normalizedMethod === PAYMENT_METHODS.demo) {
+    return tr('payment.demo');
+  }
+
+  if (normalizedMethod === PAYMENT_METHODS.unknown) {
+    return tr('payment.notSelected');
   }
 
   return last4 ? tr('payment.cardMasked', { last4 }) : tr('payment.card');

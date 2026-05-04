@@ -1,18 +1,13 @@
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useFocusEffect } from '@react-navigation/native';
 import { useCallback, useState } from 'react';
 import { useSession } from '../context/sessionContext';
 import { fetchUserProfile, mapUserDocToHookData, saveUserProfilePatch } from '../src/firebase/profileStore';
-import { roleDisplayConfig } from '../src/features/shared/config/roleDisplayConfig';
-
-const USER_PROFILE_STORAGE_KEY = '@ainevoie/user-profile';
-const LEGACY_USER_PROFILE_STORAGE_KEY = '@urbanhome/user-profile';
 
 export const defaultUserProfile = {
-  name: roleDisplayConfig.user.editProfileDefaults.name,
-  email: roleDisplayConfig.user.editProfileDefaults.email,
+  name: '',
+  email: '',
   password: '',
-  phoneNumber: roleDisplayConfig.user.editProfileDefaults.phoneNumber,
+  phoneNumber: '',
 };
 
 export function normalizeUserProfile(payload) {
@@ -22,52 +17,43 @@ export function normalizeUserProfile(payload) {
   };
 }
 
-export async function readStoredUserProfile() {
-  try {
-    const storedValue = await AsyncStorage.getItem(USER_PROFILE_STORAGE_KEY);
-
-    if (storedValue) {
-      return normalizeUserProfile(JSON.parse(storedValue));
-    }
-
-    const legacyValue = await AsyncStorage.getItem(LEGACY_USER_PROFILE_STORAGE_KEY);
-
-    if (!legacyValue) {
-      return defaultUserProfile;
-    }
-
-    await AsyncStorage.setItem(USER_PROFILE_STORAGE_KEY, legacyValue);
-    await AsyncStorage.removeItem(LEGACY_USER_PROFILE_STORAGE_KEY);
-    return normalizeUserProfile(JSON.parse(legacyValue));
-  } catch {
-    return defaultUserProfile;
-  }
-}
-
 export function useUserProfile() {
   const { session } = useSession();
   const [data, setData] = useState(defaultUserProfile);
   const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState(null);
+
+  const canUseRemote = Boolean(
+    session.isAuthenticated
+    && session.activeRole === 'user'
+    && session.uid
+    && !session.configError,
+  );
 
   const loadUserProfile = useCallback(async () => {
-    setIsLoading(true);
-    if (session.isAuthenticated && session.activeRole === 'user' && session.uid && !session.configError) {
-      try {
-        const remoteProfile = await fetchUserProfile(session.uid);
-
-        if (remoteProfile) {
-          setData(normalizeUserProfile(mapUserDocToHookData(remoteProfile, defaultUserProfile)));
-          setIsLoading(false);
-          return;
-        }
-      } catch {
-      }
+    if (!canUseRemote) {
+      setIsLoading(false);
+      return defaultUserProfile;
     }
 
-    const storedValue = await readStoredUserProfile();
-    setData(normalizeUserProfile(storedValue));
-    setIsLoading(false);
-  }, [session.activeRole, session.configError, session.isAuthenticated, session.uid]);
+    setIsLoading(true);
+    setError(null);
+
+    try {
+      const remoteProfile = await fetchUserProfile(session.uid);
+      const nextProfile = remoteProfile
+        ? normalizeUserProfile(mapUserDocToHookData(remoteProfile, defaultUserProfile))
+        : defaultUserProfile;
+      setData(nextProfile);
+      setIsLoading(false);
+      return nextProfile;
+    } catch (nextError) {
+      setError(nextError);
+      setData(defaultUserProfile);
+      setIsLoading(false);
+      return defaultUserProfile;
+    }
+  }, [canUseRemote, session.uid]);
 
   useFocusEffect(
     useCallback(() => {
@@ -76,33 +62,28 @@ export function useUserProfile() {
   );
 
   const saveUserProfile = useCallback(async (updater) => {
-    const currentValue = session.isAuthenticated && session.activeRole === 'user' && session.uid && !session.configError
-      ? normalizeUserProfile(data)
-      : await readStoredUserProfile();
-    const baseValue = normalizeUserProfile(currentValue);
-    const nextValue = typeof updater === 'function' ? updater(baseValue) : normalizeUserProfile(updater);
-    const normalized = normalizeUserProfile(nextValue);
-
-    if (session.isAuthenticated && session.activeRole === 'user' && session.uid && !session.configError) {
-      const remoteProfile = await saveUserProfilePatch(session.uid, {
-        displayName: normalized.name,
-        phoneNumber: normalized.phoneNumber || null,
-      });
-      const nextProfile = normalizeUserProfile(mapUserDocToHookData(remoteProfile, normalized));
-      setData(nextProfile);
-      return nextProfile;
+    if (!canUseRemote) {
+      throw new Error('User profile can be edited only by the authenticated user.');
     }
 
-    await AsyncStorage.setItem(USER_PROFILE_STORAGE_KEY, JSON.stringify(normalized));
-    await AsyncStorage.removeItem(LEGACY_USER_PROFILE_STORAGE_KEY);
-    setData(normalized);
-    return normalized;
-  }, [data, session.activeRole, session.configError, session.isAuthenticated, session.uid]);
+    const baseValue = normalizeUserProfile(data);
+    const nextValue = typeof updater === 'function' ? updater(baseValue) : normalizeUserProfile(updater);
+    const normalized = normalizeUserProfile(nextValue);
+    const remoteProfile = await saveUserProfilePatch(session.uid, {
+      displayName: normalized.name,
+      phoneNumber: normalized.phoneNumber || null,
+    });
+    const nextProfile = normalizeUserProfile(mapUserDocToHookData(remoteProfile, normalized));
+    setData(nextProfile);
+    return nextProfile;
+  }, [canUseRemote, data, session.uid]);
 
   return {
     data,
     isLoading,
+    error,
     loadUserProfile,
+    reload: loadUserProfile,
     saveUserProfile,
   };
 }

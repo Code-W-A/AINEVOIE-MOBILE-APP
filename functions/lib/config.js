@@ -1,7 +1,10 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.GOOGLE_MAPS_API_KEY = exports.SCHEMA_VERSION = exports.FUNCTION_REGION = void 0;
+exports.PAYMENT_DEMO_MODE = exports.STRIPE_WEBHOOK_SECRET = exports.STRIPE_SECRET_KEY = exports.GOOGLE_MAPS_API_KEY = exports.SCHEMA_VERSION = exports.FUNCTION_REGION = void 0;
 const params_1 = require("firebase-functions/params");
 exports.FUNCTION_REGION = 'europe-west1';
 exports.SCHEMA_VERSION = 1;
 exports.GOOGLE_MAPS_API_KEY = (0, params_1.defineSecret)('GOOGLE_MAPS_API_KEY');
+exports.STRIPE_SECRET_KEY = (0, params_1.defineSecret)('STRIPE_SECRET_KEY');
+exports.STRIPE_WEBHOOK_SECRET = (0, params_1.defineSecret)('STRIPE_WEBHOOK_SECRET');
+exports.PAYMENT_DEMO_MODE = (0, params_1.defineString)('PAYMENT_DEMO_MODE', { default: 'false' });

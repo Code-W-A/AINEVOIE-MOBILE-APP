@@ -18,6 +18,9 @@ import {
 import { resolveCoveragePlaceSelection, searchCoveragePlaceSuggestions } from '../../../../firebase/providerCoverageSearch';
 import { buildCoverageAreaText, normalizeCoverageAreaForm } from '../../utils/providerCoverage';
 
+const SUGGESTION_ROW_HEIGHT = 68;
+const MAX_VISIBLE_SUGGESTIONS = 5;
+
 const defaultCopy = {
   countryLabel: 'Țară',
   countryPlaceholder: 'Selectează țara',
@@ -333,27 +336,40 @@ export default function CoverageAreaEditor({
           {value?.cityCode ? resolvedCopy.searchHint : resolvedCopy.searchHint}
         </Text>
         {suggestions.length ? (
-          <View style={styles.suggestionsWrapStyle}>
-            {suggestions.map((suggestion) => (
-              <Pressable
-                key={suggestion.placeId}
-                onPress={() => {
-                  void handleResolveSuggestion(suggestion);
-                }}
-                style={({ pressed }) => [
-                  styles.suggestionItemStyle,
-                  pressed ? styles.selectFieldPressedStyle : null,
-                ]}
-              >
-                <MaterialIcons name="place" size={18} color="#B7791F" />
-                <View style={styles.suggestionTextWrapStyle}>
-                  <Text style={styles.suggestionPrimaryTextStyle}>{suggestion.primaryText || suggestion.fullText}</Text>
-                  {suggestion.secondaryText ? (
-                    <Text style={styles.suggestionSecondaryTextStyle}>{suggestion.secondaryText}</Text>
-                  ) : null}
-                </View>
-              </Pressable>
-            ))}
+          <View
+            style={[
+              styles.suggestionsWrapStyle,
+              { maxHeight: SUGGESTION_ROW_HEIGHT * MAX_VISIBLE_SUGGESTIONS },
+            ]}
+          >
+            <ScrollView
+              nestedScrollEnabled
+              keyboardShouldPersistTaps="handled"
+              showsVerticalScrollIndicator={suggestions.length > MAX_VISIBLE_SUGGESTIONS}
+            >
+              {suggestions.map((suggestion) => (
+                <Pressable
+                  key={suggestion.placeId}
+                  onPress={() => {
+                    void handleResolveSuggestion(suggestion);
+                  }}
+                  style={({ pressed }) => [
+                    styles.suggestionItemStyle,
+                    pressed ? styles.selectFieldPressedStyle : null,
+                  ]}
+                >
+                  <MaterialIcons name="place" size={18} color="#B7791F" />
+                  <View style={styles.suggestionTextWrapStyle}>
+                    <Text numberOfLines={1} style={styles.suggestionPrimaryTextStyle}>
+                      {suggestion.primaryText || suggestion.fullText}
+                    </Text>
+                    {suggestion.secondaryText ? (
+                      <Text numberOfLines={1} style={styles.suggestionSecondaryTextStyle}>{suggestion.secondaryText}</Text>
+                    ) : null}
+                  </View>
+                </Pressable>
+              ))}
+            </ScrollView>
           </View>
         ) : null}
         {!isSearching && sanitizeText(searchQuery).length >= 2 && value?.cityCode && !suggestions.length && !localError ? (
@@ -496,6 +512,7 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
   },
   suggestionItemStyle: {
+    height: SUGGESTION_ROW_HEIGHT,
     flexDirection: 'row',
     alignItems: 'flex-start',
     paddingHorizontal: 14,

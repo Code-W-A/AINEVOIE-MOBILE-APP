@@ -1,4 +1,3 @@
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useFocusEffect } from '@react-navigation/native';
 import { useCallback, useMemo, useState } from 'react';
 import { useLocale } from '../context/localeContext';
@@ -9,7 +8,6 @@ import {
   saveProviderAvailabilityProfile,
 } from '../src/firebase/providerAvailability';
 import {
-  createDefaultWeekSchedule,
   formatAvailabilitySummary,
   getAvailabilityDayChips,
   getBlockedDateKeys,
@@ -17,42 +15,6 @@ import {
   hasConfiguredAvailability,
   normalizeProviderAvailability,
 } from '../src/features/shared/utils/providerAvailability';
-
-const PROVIDER_AVAILABILITY_STORAGE_KEY = '@ainevoie/provider-availability';
-const LEGACY_PROVIDER_AVAILABILITY_STORAGE_KEY = '@urbanhome/provider-availability';
-
-const defaultProviderAvailability = {
-  weekSchedule: createDefaultWeekSchedule('ro'),
-  blockedDates: [],
-  updatedAt: null,
-};
-
-async function readStoredProviderAvailability() {
-  try {
-    const storedValue = await AsyncStorage.getItem(PROVIDER_AVAILABILITY_STORAGE_KEY);
-
-    if (storedValue) {
-      return normalizeProviderAvailability(JSON.parse(storedValue));
-    }
-
-    const legacyValue = await AsyncStorage.getItem(LEGACY_PROVIDER_AVAILABILITY_STORAGE_KEY);
-
-    if (!legacyValue) {
-      return defaultProviderAvailability;
-    }
-
-    await AsyncStorage.setItem(PROVIDER_AVAILABILITY_STORAGE_KEY, legacyValue);
-    await AsyncStorage.removeItem(LEGACY_PROVIDER_AVAILABILITY_STORAGE_KEY);
-    return normalizeProviderAvailability(JSON.parse(legacyValue));
-  } catch {
-    return defaultProviderAvailability;
-  }
-}
-
-async function persistLocalAvailability(payload) {
-  await AsyncStorage.setItem(PROVIDER_AVAILABILITY_STORAGE_KEY, JSON.stringify(payload));
-  await AsyncStorage.removeItem(LEGACY_PROVIDER_AVAILABILITY_STORAGE_KEY);
-}
 
 export { formatAvailabilitySummary, getProviderWeekDays };
 
@@ -68,43 +30,33 @@ export function useProviderAvailability(providerId = null) {
     && session.uid === resolvedProviderId
     && !session.configError,
   );
-  const [data, setData] = useState(defaultProviderAvailability);
+  const [data, setData] = useState(() => normalizeProviderAvailability(null, locale));
   const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState(null);
 
   const loadProviderAvailability = useCallback(async () => {
-    setIsLoading(true);
-
-    if (canUseRemote && resolvedProviderId) {
-      try {
-        let remoteValue = await fetchProviderAvailabilityProfile(resolvedProviderId, locale);
-        const remoteHasContent = hasConfiguredAvailability(remoteValue.weekSchedule) || remoteValue.blockedDates.length > 0;
-
-        if (!remoteHasContent && canEdit) {
-          const localValue = await readStoredProviderAvailability();
-          const localHasContent = hasConfiguredAvailability(localValue.weekSchedule) || localValue.blockedDates.length > 0;
-
-          if (localHasContent) {
-            remoteValue = await saveProviderAvailabilityProfile(resolvedProviderId, localValue, locale);
-          }
-        }
-
-        const normalizedRemoteValue = normalizeProviderAvailability(remoteValue, locale);
-        setData(normalizedRemoteValue);
-
-        if (canEdit) {
-          await persistLocalAvailability(normalizedRemoteValue);
-        }
-
-        setIsLoading(false);
-        return;
-      } catch {
-      }
+    if (!canUseRemote || !resolvedProviderId) {
+      setIsLoading(false);
+      return normalizeProviderAvailability(null, locale);
     }
 
-    const storedValue = await readStoredProviderAvailability();
-    setData(normalizeProviderAvailability(storedValue, locale));
-    setIsLoading(false);
-  }, [canEdit, canUseRemote, locale, resolvedProviderId]);
+    setIsLoading(true);
+    setError(null);
+
+    try {
+      const remoteValue = await fetchProviderAvailabilityProfile(resolvedProviderId, locale);
+      const normalizedRemoteValue = normalizeProviderAvailability(remoteValue, locale);
+      setData(normalizedRemoteValue);
+      setIsLoading(false);
+      return normalizedRemoteValue;
+    } catch (nextError) {
+      const emptyValue = normalizeProviderAvailability(null, locale);
+      setError(nextError);
+      setData(emptyValue);
+      setIsLoading(false);
+      return emptyValue;
+    }
+  }, [canUseRemote, locale, resolvedProviderId]);
 
   useFocusEffect(
     useCallback(() => {
@@ -112,11 +64,15 @@ export function useProviderAvailability(providerId = null) {
     }, [loadProviderAvailability]),
   );
 
+  const assertCanEdit = useCallback(() => {
+    if (!canEdit || !resolvedProviderId) {
+      throw new Error('Availability can be edited only by the authenticated provider.');
+    }
+  }, [canEdit, resolvedProviderId]);
+
   const saveProviderAvailability = useCallback(async (updater) => {
-    const currentValue = canUseRemote && resolvedProviderId
-      ? await fetchProviderAvailabilityProfile(resolvedProviderId, locale).catch(() => readStoredProviderAvailability())
-      : await readStoredProviderAvailability();
-    const baseValue = normalizeProviderAvailability(currentValue, locale);
+    assertCanEdit();
+    const baseValue = normalizeProviderAvailability(data, locale);
     const nextValue = typeof updater === 'function'
       ? updater(baseValue)
       : normalizeProviderAvailability(updater, locale);
@@ -124,33 +80,19 @@ export function useProviderAvailability(providerId = null) {
       ...nextValue,
       updatedAt: new Date().toISOString(),
     }, locale);
-
-    if (canEdit && resolvedProviderId) {
-      const remoteValue = await saveProviderAvailabilityProfile(resolvedProviderId, normalized, locale);
-      const normalizedRemoteValue = normalizeProviderAvailability(remoteValue, locale);
-      await persistLocalAvailability(normalizedRemoteValue);
-      setData(normalizedRemoteValue);
-      return normalizedRemoteValue;
-    }
-
-    await persistLocalAvailability(normalized);
-    setData(normalized);
-    return normalized;
-  }, [canEdit, canUseRemote, locale, resolvedProviderId]);
+    const remoteValue = await saveProviderAvailabilityProfile(resolvedProviderId, normalized, locale);
+    const normalizedRemoteValue = normalizeProviderAvailability(remoteValue, locale);
+    setData(normalizedRemoteValue);
+    return normalizedRemoteValue;
+  }, [assertCanEdit, data, locale, resolvedProviderId]);
 
   const clearProviderAvailability = useCallback(async () => {
-    if (canEdit && resolvedProviderId) {
-      const cleared = await clearProviderAvailabilityProfile(resolvedProviderId, locale);
-      const normalizedCleared = normalizeProviderAvailability(cleared, locale);
-      await persistLocalAvailability(normalizedCleared);
-      setData(normalizedCleared);
-      return;
-    }
-
-    await AsyncStorage.removeItem(PROVIDER_AVAILABILITY_STORAGE_KEY);
-    await AsyncStorage.removeItem(LEGACY_PROVIDER_AVAILABILITY_STORAGE_KEY);
-    setData(defaultProviderAvailability);
-  }, [canEdit, locale, resolvedProviderId]);
+    assertCanEdit();
+    const cleared = await clearProviderAvailabilityProfile(resolvedProviderId, locale);
+    const normalizedCleared = normalizeProviderAvailability(cleared, locale);
+    setData(normalizedCleared);
+    return normalizedCleared;
+  }, [assertCanEdit, locale, resolvedProviderId]);
 
   const localizedData = useMemo(
     () => normalizeProviderAvailability(data, locale),
@@ -180,12 +122,14 @@ export function useProviderAvailability(providerId = null) {
   return {
     data: localizedData,
     isLoading,
+    error,
     canEditAvailability: canEdit,
     hasConfiguredAvailability: hasConfiguredRemoteAvailability,
     availabilitySummary,
     availabilityDayChips,
     blockedDateKeys,
     loadProviderAvailability,
+    reload: loadProviderAvailability,
     saveProviderAvailability,
     clearProviderAvailability,
   };

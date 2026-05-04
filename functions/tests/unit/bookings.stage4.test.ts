@@ -14,6 +14,8 @@ function createMockDb(initialData: Record<string, Record<string, any>>) {
     providers: { ...(initialData.providers || {}) },
     bookings: { ...(initialData.bookings || {}) },
     payments: { ...(initialData.payments || {}) },
+    conversations: { ...(initialData.conversations || {}) },
+    conversationMemberships: { ...(initialData.conversationMemberships || {}) },
     auditEvents: { ...(initialData.auditEvents || {}) },
     idempotencyKeys: { ...(initialData.idempotencyKeys || {}) },
     providerAvailability: { ...(initialData.providerAvailability || {}) },

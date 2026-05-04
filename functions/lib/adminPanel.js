@@ -126,6 +126,7 @@ function buildProviderListItem(providerId, provider) {
     });
 }
 function buildBookingListItem(bookingId, booking) {
+    const pricingSnapshot = booking.pricingSnapshot || {};
     return serializeValue({
         bookingId,
         status: (0, shared_1.sanitizeString)(booking.status),
@@ -135,7 +136,12 @@ function buildBookingListItem(bookingId, booking) {
         scheduledStartAt: booking.scheduledStartAt || null,
         scheduledEndAt: booking.scheduledEndAt || null,
         timezone: (0, shared_1.sanitizeString)(booking.timezone),
-        paymentSummary: booking.paymentSummary || {},
+        pricingSnapshot,
+        paymentSummary: {
+            ...(booking.paymentSummary || {}),
+            amount: Number(pricingSnapshot.amount) || 0,
+            currency: (0, shared_1.sanitizeString)(pricingSnapshot.currency) || 'RON',
+        },
         userSnapshot: booking.userSnapshot || {},
         providerSnapshot: booking.providerSnapshot || {},
         serviceSnapshot: booking.serviceSnapshot || {},

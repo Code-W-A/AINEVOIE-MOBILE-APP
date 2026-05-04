@@ -4,22 +4,27 @@ import { fetchProviderDirectoryProfile } from '../src/firebase/providerDirectory
 
 export function useProviderPublicProfile(providerId) {
   const [provider, setProvider] = useState(null);
-  const [isLoading, setIsLoading] = useState(true);
+  const [isLoading, setIsLoading] = useState(Boolean(providerId));
+  const [error, setError] = useState(null);
 
   const loadProvider = useCallback(async () => {
     if (!providerId) {
       setProvider(null);
       setIsLoading(false);
-      return;
+      return null;
     }
 
+    setError(null);
     setIsLoading(true);
 
     try {
       const nextProvider = await fetchProviderDirectoryProfile(providerId);
       setProvider(nextProvider);
-    } catch {
+      return nextProvider;
+    } catch (nextError) {
+      setError(nextError);
       setProvider(null);
+      return null;
     } finally {
       setIsLoading(false);
     }
@@ -33,7 +38,10 @@ export function useProviderPublicProfile(providerId) {
 
   return {
     provider,
+    data: provider,
     isLoading,
+    error,
     loadProvider,
+    reload: loadProvider,
   };
 }

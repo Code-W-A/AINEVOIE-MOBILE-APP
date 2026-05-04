@@ -1,8 +1,7 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { View, StyleSheet, Text, Image, Dimensions, TouchableOpacity, Platform } from "react-native";
+import { ActivityIndicator, View, StyleSheet, Text, Image, Dimensions, TouchableOpacity, Platform } from "react-native";
 import { Fonts } from "../../../../../constant/styles";
 import { MaterialIcons, MaterialCommunityIcons } from '@expo/vector-icons';
-import { Snackbar } from 'react-native-paper';
 import CollapsibleToolbar from 'react-native-collapsible-toolbar';
 import MyStatusBar from "../../../../../components/myStatusBar";
 import { useLocalSearchParams, useNavigation, useRouter } from "expo-router";
@@ -28,15 +27,6 @@ import { getProviderDirectoryRecord } from "../../../shared/utils/providerDirect
 import { getServiceCategoryLabel } from "../../../shared/utils/providerServices";
 
 const { height } = Dimensions.get('window');
-
-const defaultProviderItem = {
-    image: require('../../../../../assets/images/provider/provider_1.jpg'),
-    name: 'Curat Acasă',
-    category: 'Curățenie',
-    jobCount: 197,
-    ratePerHour: 15,
-    rating: 4.9,
-};
 
 function toChipList(value) {
     if (Array.isArray(value)) {
@@ -71,7 +61,7 @@ const ServiceProviderScreen = () => {
     const { item, providerId } = useLocalSearchParams();
     const { locale, t } = useLocale();
     const resolvedProviderId = typeof providerId === 'string' ? providerId : '';
-    const { provider } = useProviderPublicProfile(resolvedProviderId);
+    const { provider, isLoading: isProviderLoading } = useProviderPublicProfile(resolvedProviderId);
     const { reviews } = useProviderReviews(resolvedProviderId);
     const {
         availabilitySummary,
@@ -81,25 +71,22 @@ const ServiceProviderScreen = () => {
 
     const providerItem = useMemo(() => {
         try {
-            return item ? JSON.parse(item) : defaultProviderItem;
+            return item ? JSON.parse(item) : null;
         } catch {
-            return defaultProviderItem;
+            return null;
         }
     }, [item]);
     const providerDisplay = useMemo(
         () => getProviderDirectoryRecord({
             providerId: provider?.providerId || resolvedProviderId,
-            providerName: provider?.displayName || providerItem.name,
+            providerName: provider?.displayName || providerItem?.name,
+            avatarUrl: provider?.avatarUrl,
         }),
-        [provider?.displayName, provider?.providerId, providerItem.name, resolvedProviderId]
+        [provider?.avatarUrl, provider?.displayName, provider?.providerId, providerItem?.name, resolvedProviderId]
     );
     const publicServices = useMemo(
         () => {
-            const sourceServices = Array.isArray(provider?.serviceSummaries)
-                ? provider.serviceSummaries
-                : Array.isArray(providerItem.serviceSummaries)
-                    ? providerItem.serviceSummaries
-                    : [];
+            const sourceServices = Array.isArray(provider?.serviceSummaries) ? provider.serviceSummaries : [];
 
             return sourceServices
                 .filter((service) => service.status === 'active')
@@ -108,18 +95,10 @@ const ServiceProviderScreen = () => {
                     categoryLabel: getServiceCategoryLabel(service.categoryKey, locale, service.categoryLabel),
                 }));
         },
-        [locale, provider?.serviceSummaries, providerItem.serviceSummaries]
+        [locale, provider?.serviceSummaries]
     );
 
-    const [state, setState] = useState({
-        showSnackBar: false,
-        isFavorite: false,
-    });
     const [selectedServiceId, setSelectedServiceId] = useState(publicServices[0]?.serviceId || null);
-
-    const updateState = (data) => setState((prevState) => ({ ...prevState, ...data }));
-
-    const { showSnackBar, isFavorite } = state;
     const selectedService = useMemo(
         () => publicServices.find((service) => service.serviceId === selectedServiceId) || publicServices[0] || null,
         [publicServices, selectedServiceId],
@@ -136,30 +115,30 @@ const ServiceProviderScreen = () => {
         }
     }, [publicServices, selectedServiceId]);
 
-    const providerNameLabel = provider?.displayName || providerItem.name;
-    const providerRate = selectedService?.baseRateAmount ?? provider?.baseRateAmount ?? providerItem.ratePerHour;
-    const providerRating = provider?.ratingAverage ?? providerItem.rating;
+    const providerNameLabel = provider?.displayName || providerItem?.name || t('providerDetail.notFoundTitle');
+    const providerRate = selectedService?.baseRateAmount ?? provider?.baseRateAmount ?? providerItem?.ratePerHour;
+    const providerRating = provider?.ratingAverage ?? providerItem?.rating ?? 0;
     const providerReviewCount = provider?.reviewCount ?? 0;
-    const providerJobCount = provider?.jobCount ?? providerItem.jobCount;
-    const serviceTypeLabel = selectedService?.categoryLabel || provider?.categoryPrimary || providerItem.category || 'Curățenie';
+    const providerJobCount = provider?.jobCount ?? providerItem?.jobCount ?? 0;
+    const serviceTypeLabel = selectedService?.categoryLabel || provider?.categoryPrimary || providerItem?.category || 'Serviciu';
     const visibleReviews = useMemo(() => reviews.slice(0, 4), [reviews]);
     const providerDetailProfile = useMemo(() => {
         const fallbackCoverageTags = toChipList(
             provider?.coverageTags
-            || providerItem.coverageTags
+            || providerItem?.coverageTags
             || provider?.coverageAreaText
-            || providerItem.coverageAreaText
+            || providerItem?.coverageAreaText
             || provider?.cityName
-            || providerItem.cityName
+            || providerItem?.cityName
         );
-        const fallbackAvailabilityChips = toChipList(provider?.availabilityDayChips || providerItem.availabilityDayChips);
-        const fallbackAvailabilitySummary = provider?.availabilitySummary || providerItem.availabilitySummary || t('providerDetail.availabilityFallback');
+        const fallbackAvailabilityChips = toChipList(provider?.availabilityDayChips || providerItem?.availabilityDayChips);
+        const fallbackAvailabilitySummary = provider?.availabilitySummary || providerItem?.availabilitySummary || t('providerDetail.availabilityFallback');
         const coverageArea = provider?.coverageAreaText
-            || providerItem.coverageAreaText
+            || providerItem?.coverageAreaText
             || provider?.cityName
-            || providerItem.cityName
+            || providerItem?.cityName
             || t('providerDetail.coverageFallback');
-        const description = provider?.description || providerItem.description || t('providerDetail.descriptionFallback');
+        const description = provider?.description || providerItem?.description || t('providerDetail.descriptionFallback');
 
         return {
             description,
@@ -169,6 +148,36 @@ const ServiceProviderScreen = () => {
             availabilityDayChips: hasConfiguredAvailability ? availabilityDayChips : fallbackAvailabilityChips,
         };
     }, [availabilityDayChips, availabilitySummary, hasConfiguredAvailability, provider, providerItem, t]);
+
+    if (isProviderLoading) {
+        return (
+            <View style={styles.screen}>
+                <MyStatusBar backgroundColor={DiscoveryTokens.brandDark} barStyle="light-content" />
+                <View style={styles.emptyProfileStateWrap}>
+                    <ActivityIndicator size="small" color={DiscoveryTokens.accent} />
+                    <Text style={styles.emptyProfileStateTitle}>Se încarcă prestatorul...</Text>
+                </View>
+            </View>
+        );
+    }
+
+    if (!resolvedProviderId || !provider) {
+        return (
+            <View style={styles.screen}>
+                <MyStatusBar backgroundColor={DiscoveryTokens.brandDark} barStyle="light-content" />
+                <View style={styles.headerWrapStyle}>
+                    <TouchableOpacity activeOpacity={0.9} onPress={() => navigation.pop()} style={styles.headerActionButton}>
+                        <MaterialIcons name="arrow-back" size={22} color={DiscoveryTokens.textPrimary} />
+                    </TouchableOpacity>
+                </View>
+                <View style={styles.emptyProfileStateWrap}>
+                    <MaterialIcons name="person-off" size={28} color={DiscoveryTokens.accent} />
+                    <Text style={styles.emptyProfileStateTitle}>{t('providerDetail.notFoundTitle')}</Text>
+                    <Text style={styles.emptyProfileStateText}>{t('providerDetail.notFoundBody')}</Text>
+                </View>
+            </View>
+        );
+    }
 
     return (
         <View style={styles.screen}>
@@ -194,29 +203,13 @@ const ServiceProviderScreen = () => {
                 />
             </View>
             {bookNowButton()}
-            {snackBar()}
         </View>
     );
-
-    function snackBar() {
-        return (
-            <Snackbar
-                visible={showSnackBar}
-                onDismiss={() => updateState({ showSnackBar: false })}
-                style={styles.snackBarStyle}
-                elevation={0}
-            >
-                <Text style={styles.snackBarText}>
-                    {isFavorite ? t('providerDetail.favoriteAdded') : t('providerDetail.favoriteRemoved')}
-                </Text>
-            </Snackbar>
-        );
-    }
 
     function heroBanner() {
         return (
             <View style={styles.heroBannerWrap}>
-                <Image source={providerDisplay.image || providerItem.image} style={styles.heroImage} resizeMode="cover" />
+                <Image source={providerDisplay.image || providerItem?.image} style={styles.heroImage} resizeMode="cover" />
                 <View style={styles.heroOverlay} />
                
             </View>
@@ -237,13 +230,6 @@ const ServiceProviderScreen = () => {
                     >
                         <MaterialCommunityIcons name="message-outline" size={20} color={DiscoveryTokens.textPrimary} />
                     </TouchableOpacity>
-                    <TouchableOpacity
-                        activeOpacity={0.9}
-                        onPress={() => updateState({ isFavorite: !isFavorite, showSnackBar: true })}
-                        style={styles.headerActionButton}
-                    >
-                        <MaterialIcons name={isFavorite ? 'favorite' : 'favorite-border'} size={22} color={DiscoveryTokens.accent} />
-                    </TouchableOpacity>
                 </View>
             </View>
         );
@@ -254,23 +240,23 @@ const ServiceProviderScreen = () => {
             <View style={styles.bookNowBar}>
                 <TouchableOpacity
                     activeOpacity={0.9}
-                    disabled={!hasConfiguredAvailability}
+                    disabled={!hasConfiguredAvailability || !selectedService}
                     onPress={() => router.push({
                         pathname: '/user/selectDateAndTime/selectDateAndTimeScreen',
                         params: {
-                            providerId: provider?.providerId || resolvedProviderId || providerItem.id,
+                            providerId: provider.providerId,
                             providerName: providerNameLabel,
                             providerRole: serviceTypeLabel,
                             serviceId: selectedService?.serviceId || '',
                             serviceName: selectedService?.name || serviceTypeLabel,
                             ratePerHour: String(providerRate ?? 0),
-                            currency: DEFAULT_MOCK_CURRENCY,
+                            currency: selectedService?.baseRateCurrency || provider?.baseRateCurrency || DEFAULT_MOCK_CURRENCY,
                         },
                     })}
-                    style={[styles.bookNowButtonStyle, !hasConfiguredAvailability ? styles.bookNowButtonDisabledStyle : null]}
+                    style={[styles.bookNowButtonStyle, (!hasConfiguredAvailability || !selectedService) ? styles.bookNowButtonDisabledStyle : null]}
                 >
                     <Text style={styles.bookNowButtonText}>
-                        {hasConfiguredAvailability ? t('providerDetail.bookNow') : t('providerDetail.bookingUnavailable')}
+                        {hasConfiguredAvailability && selectedService ? t('providerDetail.bookNow') : t('providerDetail.bookingUnavailable')}
                     </Text>
                 </TouchableOpacity>
             </View>
@@ -284,7 +270,7 @@ const ServiceProviderScreen = () => {
                 onPress={() => router.push({
                     pathname: '/user/allReviews/allReviewsScreen',
                     params: {
-                        providerId: provider?.providerId || resolvedProviderId || providerItem.id,
+                        providerId: provider.providerId,
                         providerName: providerNameLabel,
                     },
                 })}
@@ -473,7 +459,7 @@ const ServiceProviderScreen = () => {
                         <View style={[styles.providerMetaItem, styles.providerMetaItemRight]}>
                             <Text numberOfLines={1} style={[styles.providerMetaLabel, styles.providerMetaLabelRight]}>Tarif</Text>
                             <Text numberOfLines={1} style={[styles.providerMetaValue, styles.providerMetaValueAccent, styles.providerMetaValueRight]}>
-                                {formatHourlyRate(providerRate)}
+                                {formatHourlyRate(providerRate, selectedService?.baseRateCurrency || provider?.baseRateCurrency, 'Tarif nespecificat')}
                             </Text>
                         </View>
                     </View>

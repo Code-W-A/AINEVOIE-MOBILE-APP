@@ -4,14 +4,14 @@ import { tr } from '../localization';
 export const roleDisplayConfig = {
   user: {
     role: 'user',
-    profileDisplayName: 'Stella French',
-    profileEmail: 'stella@abc.com',
+    profileDisplayName: '',
+    profileEmail: '',
     defaultAvatarSource: require('../../../../assets/images/user/user_5.jpg'),
     editProfileDefaults: {
-      name: 'Stella French',
-      email: 'stella@abc.com',
+      name: '',
+      email: '',
       password: '',
-      phoneNumber: '1234567890',
+      phoneNumber: '',
     },
     otp: {
       scrollMode: 'center',
@@ -20,14 +20,14 @@ export const roleDisplayConfig = {
   },
   provider: {
     role: 'provider',
-    profileDisplayName: 'Amara Smith',
-    profileEmail: 'amara@test.com',
+    profileDisplayName: '',
+    profileEmail: '',
     defaultAvatarSource: require('../../../../assets/images/provider-role/provider_7.jpg'),
     editProfileDefaults: {
-      name: 'Amara Smith',
-      email: 'amara@test.com',
+      name: '',
+      email: '',
       password: '',
-      phoneNumber: '123456789',
+      phoneNumber: '',
     },
     otp: {
       scrollMode: 'top',
@@ -41,8 +41,8 @@ export function getProviderProfileFallback(providerOnboarding, t = tr) {
   const account = providerOnboarding?.account || {};
 
   return {
-    profileDisplayName: profile.displayName || profile.businessName || roleDisplayConfig.provider.profileDisplayName,
-    profileEmail: account.email || roleDisplayConfig.provider.profileEmail,
+    profileDisplayName: profile.displayName || profile.businessName || account.name || t('role.provider.profileTitle'),
+    profileEmail: account.email || '',
     profileSubtitle: providerOnboarding?.verificationStatus === 'pending'
       ? t('role.provider.pendingSubtitle')
       : t('role.provider.profileSubtitle'),

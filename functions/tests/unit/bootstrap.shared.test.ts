@@ -2,6 +2,9 @@ import {
   ACCOUNT_STATUSES,
   computeBootstrapProfileFlags,
   DEFAULT_NOTIFICATION_PREFERENCES,
+  deriveRomaniaHierarchyFromPlacemark,
+  findRomaniaCity,
+  getRomaniaCitiesByCounty,
   PROVIDER_STATUSES,
   ROLES,
   sanitizeBootstrapPayload,
@@ -49,5 +52,47 @@ describe('firebase shared bootstrap helpers', () => {
       messages: true,
       promoSystem: true,
     });
+  });
+
+  it('lists Bucharest sectors as city choices while keeping legacy Bucharest compatible', () => {
+    expect(getRomaniaCitiesByCounty('B')).toEqual([
+      { cityCode: 'sector-1', cityName: 'Sector 1' },
+      { cityCode: 'sector-2', cityName: 'Sector 2' },
+      { cityCode: 'sector-3', cityName: 'Sector 3' },
+      { cityCode: 'sector-4', cityName: 'Sector 4' },
+      { cityCode: 'sector-5', cityName: 'Sector 5' },
+      { cityCode: 'sector-6', cityName: 'Sector 6' },
+    ]);
+    expect(findRomaniaCity('B', 'Sector 3')).toEqual(expect.objectContaining({
+      cityCode: 'sector-3',
+      cityName: 'Sector 3',
+    }));
+    expect(findRomaniaCity('B', 'București')).toEqual(expect.objectContaining({
+      cityCode: 'bucuresti',
+      cityName: 'București',
+    }));
+  });
+
+  it('derives Bucharest sector from placemark hierarchy or formatted address', () => {
+    expect(deriveRomaniaHierarchyFromPlacemark({
+      countryName: 'România',
+      region: 'București',
+      district: 'Sector 6',
+    })).toEqual(expect.objectContaining({
+      countyCode: 'B',
+      countyName: 'București',
+      cityCode: 'sector-6',
+      cityName: 'Sector 6',
+    }));
+
+    expect(deriveRomaniaHierarchyFromPlacemark({
+      countryName: 'România',
+      region: 'București',
+      city: 'București',
+      formattedAddress: 'Bulevardul Iuliu Maniu 10, Sector 6, București, România',
+    })).toEqual(expect.objectContaining({
+      cityCode: 'sector-6',
+      cityName: 'Sector 6',
+    }));
   });
 });

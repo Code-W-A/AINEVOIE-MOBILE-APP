@@ -33,8 +33,15 @@ function buildProviderDirectoryDoc(providerId, providerData, availabilityData = 
     const serviceSummaries = (0, providerServices_1.buildProviderServiceSummaries)(normalizedServicesData);
     const categoryPrimary = (0, providerServices_1.derivePrimaryCategory)(normalizedServicesData, professionalProfile.specialization);
     const coverageArea = (0, providerCoverage_1.normalizeCoverageArea)(professionalProfile.coverageArea);
-    const coverageAreaText = (0, providerCoverage_1.buildCoverageAreaText)(coverageArea)
-        || (0, shared_1.sanitizeString)(professionalProfile.coverageAreaText)
+    const profileCoverageAreaText = (0, shared_1.sanitizeString)(professionalProfile.coverageAreaText);
+    const hasCoverageAreaDetails = Boolean(coverageArea.countyCode
+        || coverageArea.countyName
+        || coverageArea.cityCode
+        || coverageArea.cityName
+        || coverageArea.locationLabel
+        || coverageArea.formattedAddress);
+    const coverageAreaText = profileCoverageAreaText
+        || (hasCoverageAreaDetails ? (0, providerCoverage_1.buildCoverageAreaText)(coverageArea) : '')
         || 'Acoperire nespecificată';
     const normalizedAvailability = availabilityData || null;
     const derivedAvailabilitySummary = normalizedAvailability && (0, providerAvailability_1.hasConfiguredAvailability)(normalizedAvailability.weekSchedule)
@@ -48,6 +55,7 @@ function buildProviderDirectoryDoc(providerId, providerData, availabilityData = 
     const validBaseRateAmount = Number.isFinite(baseRateAmount) && baseRateAmount > 0 ? baseRateAmount : 0;
     const ratingAverage = Number(reviewAggregate?.ratingAverage) || 0;
     const reviewCount = Number(reviewAggregate?.reviewCount) || 0;
+    const ratingSum = Number(reviewAggregate?.ratingSum) || 0;
     return {
         providerId,
         status: shared_1.PROVIDER_STATUSES.APPROVED,
@@ -71,6 +79,7 @@ function buildProviderDirectoryDoc(providerId, providerData, availabilityData = 
         baseRateCurrency: (0, shared_1.sanitizeString)(professionalProfile.baseRateCurrency) || 'RON',
         ratingAverage,
         reviewCount,
+        ratingSum,
         jobCount: 0,
         avatarPath: (0, shared_1.sanitizeString)(professionalProfile.avatarPath) || null,
         serviceSummaries,
@@ -100,7 +109,19 @@ async function syncProviderDirectorySnapshot({ db }, providerId, providerData) {
     }
     const availabilityData = await (0, providerAvailability_1.fetchProviderAvailabilityProfile)({ db }, providerId);
     const servicesData = await (0, providerServices_1.fetchProviderServices)({ db }, providerId);
-    const reviewAggregate = await (0, reviews_1.fetchProviderReviewAggregate)({ db }, providerId);
+    const directorySnap = await directoryRef.get();
+    let reviewAggregate;
+    if (directorySnap.exists) {
+        const existing = directorySnap.data() || {};
+        reviewAggregate = {
+            ratingAverage: Number(existing.ratingAverage) || 0,
+            reviewCount: Number(existing.reviewCount) || 0,
+            ratingSum: Number(existing.ratingSum) || 0,
+        };
+    }
+    else {
+        reviewAggregate = await (0, reviews_1.fetchProviderReviewAggregate)({ db }, providerId);
+    }
     await directoryRef.set(buildProviderDirectoryDoc(providerId, providerData, availabilityData, servicesData, reviewAggregate), { merge: true });
     return { action: 'published' };
 }

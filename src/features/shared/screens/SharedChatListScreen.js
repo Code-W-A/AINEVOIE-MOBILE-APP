@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from 'react';
-import { FlatList, Modal, Pressable, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { ActivityIndicator, FlatList, Modal, Pressable, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { MaterialIcons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import MyStatusBar from '../../../../components/myStatusBar';
@@ -13,29 +13,36 @@ import ChatCircleButton from '../components/chat/ChatCircleButton';
 import ChatConversationRow from '../components/chat/ChatConversationRow';
 import ChatSearchBar from '../components/chat/ChatSearchBar';
 
-export default function SharedChatListScreen({ conversations, messageRoute }) {
+export default function SharedChatListScreen({
+  conversations = [],
+  messageRoute,
+  isLoading = false,
+  error = null,
+  onMarkAllAsRead,
+}) {
   const router = useRouter();
   const [query, setQuery] = useState('');
   const [showUnreadOnly, setShowUnreadOnly] = useState(false);
   const [isFilterSheetVisible, setIsFilterSheetVisible] = useState(false);
-  const [conversationList, setConversationList] = useState(conversations);
 
   const filteredUsers = useMemo(() => {
     const normalizedQuery = query.trim().toLowerCase();
 
-    return conversationList.filter((item) => {
-      const matchesUnread = showUnreadOnly ? item.isReadable : true;
+    return conversations.filter((item) => {
+      const matchesUnread = showUnreadOnly ? item.isUnread : true;
       const matchesQuery = normalizedQuery.length === 0
         ? true
-        : item.name.toLowerCase().includes(normalizedQuery)
-          || item.about.toLowerCase().includes(normalizedQuery);
+        : String(item.name || '').toLowerCase().includes(normalizedQuery)
+          || String(item.about || '').toLowerCase().includes(normalizedQuery);
 
       return matchesUnread && matchesQuery;
     });
-  }, [conversationList, query, showUnreadOnly]);
+  }, [conversations, query, showUnreadOnly]);
 
   function markAllAsRead() {
-    setConversationList((currentList) => currentList.map((item) => ({ ...item, isReadable: false })));
+    if (onMarkAllAsRead) {
+      void onMarkAllAsRead();
+    }
     setShowUnreadOnly(false);
     setIsFilterSheetVisible(false);
   }
@@ -71,7 +78,7 @@ export default function SharedChatListScreen({ conversations, messageRoute }) {
         />
 
         <Text style={styles.headerSubtitle}>
-          {showUnreadOnly ? 'Afișezi doar conversațiile necitite.' : 'Vezi conversațiile active și ultimele răspunsuri.'}
+          {showUnreadOnly ? 'Afișezi doar conversațiile necitite.' : 'Conversațiile sunt sincronizate cu Firebase.'}
         </Text>
       </View>
     );
@@ -118,8 +125,55 @@ export default function SharedChatListScreen({ conversations, messageRoute }) {
     return (
       <ChatConversationRow
         item={item}
-        onPress={() => router.push({ pathname: messageRoute, params: { name: item.name } })}
+        onPress={() => router.push({
+          pathname: messageRoute,
+          params: {
+            conversationId: item.conversationId,
+            name: item.name,
+          },
+        })}
       />
+    );
+  }
+
+  function renderLoadingState() {
+    return (
+      <View style={styles.emptyStateWrapStyle}>
+        <ActivityIndicator color={AinevoieDiscoveryTokens.accent} />
+        <Text style={styles.emptyStateTitleStyle}>Se încarcă mesajele</Text>
+      </View>
+    );
+  }
+
+  function renderErrorState() {
+    return (
+      <View style={styles.emptyStateWrapStyle}>
+        <MaterialIcons name="error-outline" size={28} color={AinevoieDiscoveryTokens.accent} />
+        <Text style={styles.emptyStateTitleStyle}>Nu am putut încărca mesajele.</Text>
+        <Text style={styles.emptyStateTextStyle}>
+          {error?.message || 'Încearcă din nou după câteva momente.'}
+        </Text>
+      </View>
+    );
+  }
+
+  function renderEmptyState() {
+    if (isLoading) {
+      return renderLoadingState();
+    }
+
+    if (error) {
+      return renderErrorState();
+    }
+
+    return (
+      <View style={styles.emptyStateWrapStyle}>
+        <MaterialIcons name="chat-bubble-outline" size={28} color={AinevoieDiscoveryTokens.accent} />
+        <Text style={styles.emptyStateTitleStyle}>Nu ai conversații încă.</Text>
+        <Text style={styles.emptyStateTextStyle}>
+          Conversațiile apar aici după ce trimiți sau primești primul mesaj.
+        </Text>
+      </View>
     );
   }
 
@@ -136,6 +190,7 @@ export default function SharedChatListScreen({ conversations, messageRoute }) {
         contentInsetAdjustmentBehavior="never"
         contentContainerStyle={styles.listContentStyle}
         keyboardShouldPersistTaps="handled"
+        ListEmptyComponent={renderEmptyState}
       />
       {renderFilterSheet()}
     </View>
@@ -149,6 +204,22 @@ const styles = StyleSheet.create({
   listContentStyle: {
     paddingTop: AinevoieDiscoverySpacing.xs,
     paddingBottom: AinevoieDiscoverySpacing.xxl,
+    flexGrow: 1,
+  },
+  emptyStateWrapStyle: {
+    ...AinevoieDiscoveryPrimitives.emptyState,
+    marginHorizontal: AinevoieDiscoverySpacing.xl,
+    marginTop: AinevoieDiscoverySpacing.xl,
+  },
+  emptyStateTitleStyle: {
+    ...AinevoieDiscoveryTypography.sectionTitle,
+    textAlign: 'center',
+    marginTop: AinevoieDiscoverySpacing.sm,
+  },
+  emptyStateTextStyle: {
+    ...AinevoieDiscoveryTypography.bodyMuted,
+    textAlign: 'center',
+    marginTop: AinevoieDiscoverySpacing.sm,
   },
   headerSectionStyle: {
     paddingHorizontal: AinevoieDiscoverySpacing.xl,

@@ -41,7 +41,10 @@ export function getUserBottomTabs(t = tr) {
   ];
 }
 
-export function getProviderBottomTabs(t = tr) {
+export function getProviderBottomTabs(t = tr, counts = {}) {
+  const requestCount = Number(counts.requestCount) || 0;
+  const unreadChatCount = Number(counts.unreadChatCount) || 0;
+
   return [
     {
       name: 'booking/bookingScreen',
@@ -63,7 +66,7 @@ export function getProviderBottomTabs(t = tr) {
       IconComponent: MaterialCommunityIcons,
       iconName: 'clipboard-text-outline',
       testId: 'provider-tab-requests',
-      badgeCount: 3,
+      badgeCount: requestCount,
     },
     {
       name: 'chat/chatScreen',
@@ -71,7 +74,7 @@ export function getProviderBottomTabs(t = tr) {
       IconComponent: MaterialIcons,
       iconName: 'chat',
       testId: 'provider-tab-chat',
-      badgeCount: 2,
+      badgeCount: unreadChatCount,
     },
     {
       name: 'review/reviewScreen',

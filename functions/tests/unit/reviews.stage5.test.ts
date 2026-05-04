@@ -15,6 +15,8 @@ function createMockDb(initialData: Record<string, Record<string, any>>) {
     providers: { ...(initialData.providers || {}) },
     bookings: { ...(initialData.bookings || {}) },
     payments: { ...(initialData.payments || {}) },
+    conversations: { ...(initialData.conversations || {}) },
+    conversationMemberships: { ...(initialData.conversationMemberships || {}) },
     reviews: { ...(initialData.reviews || {}) },
     auditEvents: { ...(initialData.auditEvents || {}) },
     idempotencyKeys: { ...(initialData.idempotencyKeys || {}) },
@@ -116,19 +118,29 @@ function createMockDb(initialData: Record<string, Record<string, any>>) {
             return createRootDocRef(collectionName, nextId);
           },
           where(fieldName: string, operator: string, expectedValue: unknown) {
-            return {
+            const filters = [{ fieldName, operator, expectedValue }];
+            const queryBuilder = {
+              where(nextFieldName: string, nextOperator: string, nextExpectedValue: unknown) {
+                filters.push({
+                  fieldName: nextFieldName,
+                  operator: nextOperator,
+                  expectedValue: nextExpectedValue,
+                });
+                return queryBuilder;
+              },
               async get() {
-                if (operator !== '==') {
-                  throw new Error(`Unsupported operator in mock query: ${operator}`);
+                if (filters.some((filter) => filter.operator !== '==')) {
+                  throw new Error('Unsupported operator in mock query.');
                 }
 
                 const docs = Object.entries(store[collectionName])
-                  .filter(([, value]) => value && value[fieldName] === expectedValue)
+                  .filter(([, value]) => value && filters.every((filter) => value[filter.fieldName] === filter.expectedValue))
                   .map(([id, value]) => createSnapshot(value, createRootDocRef(collectionName, id)));
 
                 return { docs };
               },
             };
+            return queryBuilder;
           },
         };
       },
@@ -259,7 +271,7 @@ describe('stage 5 payments summary and reviews services', () => {
       {
         bookingId: created.bookingId,
         paymentSummary: {
-          status: 'paid',
+          status: 'failed',
           method: 'card',
           last4: '4242',
         },
@@ -267,9 +279,9 @@ describe('stage 5 payments summary and reviews services', () => {
     );
 
     expect(updated.booking.paymentSummary.paymentId).toBe(paymentId);
-    expect(updated.booking.paymentSummary.status).toBe('paid');
-    expect(updated.booking.paymentSummary.transactionId).toBeTruthy();
-    expect(store.payments[paymentId].status).toBe('paid');
+    expect(updated.booking.paymentSummary.status).toBe('failed');
+    expect(updated.booking.paymentSummary.transactionId).toBeNull();
+    expect(store.payments[paymentId].status).toBe('failed');
     expect(store.payments[paymentId].last4).toBe('4242');
     expect(store.payments[paymentId].transactionId).toBe(updated.booking.paymentSummary.transactionId);
     expect(Object.values(store.auditEvents).map((event) => event.action)).toEqual([
@@ -293,7 +305,7 @@ describe('stage 5 payments summary and reviews services', () => {
         'user_1',
         {
           bookingId: created.bookingId,
-          paymentSummary: { status: 'paid' },
+          paymentSummary: { status: 'failed' },
         },
       ),
     ).rejects.toThrow('Payment summary cannot be updated for a closed booking.');

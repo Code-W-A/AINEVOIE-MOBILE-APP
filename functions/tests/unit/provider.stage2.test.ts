@@ -1,6 +1,8 @@
 import { describe, expect, it, jest } from '@jest/globals';
+import sharp from 'sharp';
 import { buildProviderDirectoryDoc } from '../../src/providerDirectory';
 import {
+  finalizeProviderAvatarUploadService,
   finalizeProviderDocumentUploadService,
   finalizeUserAvatarUploadService,
 } from '../../src/storageFinalize';
@@ -46,24 +48,37 @@ function createMockDb(initialData: Record<string, Record<string, any>>) {
     store,
     db: {
       collection(collectionName: 'users' | 'providers' | 'providerDirectory' | 'reviews' | 'auditEvents') {
+        function makeQuery(filters: Array<{ fieldName: string, expectedValue: unknown }>) {
+          return {
+            where(fieldName: string, operator: string, expectedValue: unknown) {
+              if (operator !== '==') {
+                throw new Error(`Unsupported operator in mock query: ${operator}`);
+              }
+
+              return makeQuery([...filters, { fieldName, expectedValue }]);
+            },
+            async get() {
+              const docs = Object.entries(store[collectionName])
+                .filter(([, value]) => filters.every((filter) => (
+                  value && value[filter.fieldName] === filter.expectedValue
+                )))
+                .map(([id, value]) => ({
+                  id,
+                  data: () => value,
+                }));
+
+              return { docs };
+            },
+          };
+        }
+
         return {
           where(fieldName: string, operator: string, expectedValue: unknown) {
-            return {
-              async get() {
-                if (operator !== '==') {
-                  throw new Error(`Unsupported operator in mock query: ${operator}`);
-                }
+            if (operator !== '==') {
+              throw new Error(`Unsupported operator in mock query: ${operator}`);
+            }
 
-                const docs = Object.entries(store[collectionName])
-                  .filter(([, value]) => value && value[fieldName] === expectedValue)
-                  .map(([id, value]) => ({
-                    id,
-                    data: () => value,
-                  }));
-
-                return { docs };
-              },
-            };
+            return makeQuery([{ fieldName, expectedValue }]);
           },
           doc(id?: string) {
             const nextId = id || `${String(collectionName).slice(0, 3)}_${Object.keys(store[collectionName]).length + 1}`;
@@ -153,11 +168,15 @@ function createMockDb(initialData: Record<string, Record<string, any>>) {
   };
 }
 
-function createMockStorage(existingPaths: string[] = []) {
+function createMockStorage(existingPaths: string[] = [], initialBuffers: Record<string, Buffer> = {}) {
   const files = new Set(existingPaths);
+  const buffers = new Map(Object.entries(initialBuffers));
+  const metadata = new Map<string, unknown>();
 
   return {
     files,
+    buffers,
+    metadata,
     storage: {
       bucket() {
         return {
@@ -168,6 +187,19 @@ function createMockStorage(existingPaths: string[] = []) {
               },
               async delete() {
                 files.delete(storagePath);
+                buffers.delete(storagePath);
+              },
+              async download() {
+                if (!files.has(storagePath)) {
+                  throw new Error(`Missing mock storage file: ${storagePath}`);
+                }
+
+                return [buffers.get(storagePath) || Buffer.from('mock-file')];
+              },
+              async save(payload: Buffer, options?: unknown) {
+                files.add(storagePath);
+                buffers.set(storagePath, payload);
+                metadata.set(storagePath, options);
               },
             };
           },
@@ -606,6 +638,84 @@ describe('stage 2 provider/profile services', () => {
     expect(store.providers.provider_1.documents.identity.storagePath).toBe('providers/provider_1/documents/identity/ci.jpg');
   });
 
+  it('normalizes a provider avatar to the canonical public path', async () => {
+    const sourceBuffer = await sharp({
+      create: {
+        width: 1600,
+        height: 900,
+        channels: 3,
+        background: '#f3d7b3',
+      },
+    })
+      .jpeg()
+      .toBuffer();
+    const { db, store } = createMockDb({
+      providers: {
+        provider_1: {
+          uid: 'provider_1',
+          role: 'provider',
+          status: PROVIDER_STATUSES.APPROVED,
+          professionalProfile: {
+            avatarPath: 'providers/provider_1/avatar/old.jpg',
+          },
+        },
+      },
+    });
+    const { storage, files, buffers } = createMockStorage(
+      [
+        'providers/provider_1/avatar/source.jpg',
+        'providers/provider_1/avatar/old.jpg',
+      ],
+      {
+        'providers/provider_1/avatar/source.jpg': sourceBuffer,
+      },
+    );
+
+    const result = await finalizeProviderAvatarUploadService(
+      { db: db as never, storage: storage as never },
+      'provider_1',
+      { storagePath: 'providers/provider_1/avatar/source.jpg' },
+    );
+
+    const outputPath = 'providers/provider_1/avatar/profile.jpg';
+    const outputMetadata = await sharp(buffers.get(outputPath) as Buffer).metadata();
+    expect(result.avatarPath).toBe(outputPath);
+    expect(store.providers.provider_1.professionalProfile.avatarPath).toBe(outputPath);
+    expect(files.has(outputPath)).toBe(true);
+    expect(files.has('providers/provider_1/avatar/source.jpg')).toBe(false);
+    expect(files.has('providers/provider_1/avatar/old.jpg')).toBe(false);
+    expect(outputMetadata.width).toBe(1024);
+    expect(outputMetadata.height).toBe(1024);
+    expect(outputMetadata.format).toBe('jpeg');
+  });
+
+  it('rejects invalid provider avatar image files', async () => {
+    const { db } = createMockDb({
+      providers: {
+        provider_1: {
+          uid: 'provider_1',
+          role: 'provider',
+          status: PROVIDER_STATUSES.APPROVED,
+          professionalProfile: {
+            avatarPath: null,
+          },
+        },
+      },
+    });
+    const { storage } = createMockStorage(
+      ['providers/provider_1/avatar/source.jpg'],
+      {
+        'providers/provider_1/avatar/source.jpg': Buffer.from('not-an-image'),
+      },
+    );
+
+    await expect(finalizeProviderAvatarUploadService(
+      { db: db as never, storage: storage as never },
+      'provider_1',
+      { storagePath: 'providers/provider_1/avatar/source.jpg' },
+    )).rejects.toThrow('Provider avatar must be a valid image file.');
+  });
+
   it('approves a pending provider and publishes the provider directory snapshot', async () => {
     const { db, store } = createMockDb({
       providers: {
@@ -700,6 +810,63 @@ describe('stage 2 provider/profile services', () => {
         action: 'provider.review',
         actorUid: 'admin_1',
         statusFrom: PROVIDER_STATUSES.PENDING_REVIEW,
+        statusTo: PROVIDER_STATUSES.APPROVED,
+      }),
+    ]);
+  });
+
+  it('approves an incomplete pre-registered provider with public fallback data', async () => {
+    const { db, store } = createMockDb({
+      providers: {
+        provider_1: {
+          uid: 'provider_1',
+          role: 'provider',
+          status: PROVIDER_STATUSES.PRE_REGISTERED,
+          accountStatus: 'active',
+          professionalProfile: {},
+          documents: {},
+          reviewState: { submittedAt: null, lastReviewedAt: null },
+          adminReview: { reviewedBy: null, action: null, reason: null, reviewedAt: null },
+          suspension: null,
+          lastPublishedAt: null,
+        },
+      },
+    });
+    const setCustomUserClaims = jest.fn();
+
+    const result = await adminReviewProviderService(
+      {
+        db: db as never,
+        auth: { setCustomUserClaims } as never,
+      },
+      'admin_1',
+      'admin',
+      {
+        providerId: 'provider_1',
+        action: PROVIDER_REVIEW_ACTIONS.APPROVE,
+      },
+    );
+
+    expect(result.status).toBe(PROVIDER_STATUSES.APPROVED);
+    expect(store.providers.provider_1.status).toBe(PROVIDER_STATUSES.APPROVED);
+    expect(store.providerDirectory.provider_1).toEqual(expect.objectContaining({
+      providerId: 'provider_1',
+      status: PROVIDER_STATUSES.APPROVED,
+      displayName: 'Provider AI Nevoie',
+      coverageAreaText: 'Acoperire nespecificată',
+      availabilitySummary: 'Disponibilitatea va fi publicată curând',
+      description: 'Profil profesional în curs de configurare.',
+      baseRateAmount: 0,
+    }));
+    expect(setCustomUserClaims).toHaveBeenCalledWith('provider_1', expect.objectContaining({
+      role: 'provider',
+      providerStatus: PROVIDER_STATUSES.APPROVED,
+    }));
+    expect(Object.values(store.auditEvents)).toEqual([
+      expect.objectContaining({
+        action: 'provider.review',
+        actorUid: 'admin_1',
+        statusFrom: PROVIDER_STATUSES.PRE_REGISTERED,
         statusTo: PROVIDER_STATUSES.APPROVED,
       }),
     ]);

@@ -14,6 +14,7 @@ const errors_1 = require("./errors");
 const logging_1 = require("./logging");
 const shared_1 = require("./shared");
 const providerAvailability_1 = require("./providerAvailability");
+const chat_1 = require("./chat");
 const BOOKING_STATUSES = Object.freeze({
     REQUESTED: 'requested',
     CONFIRMED: 'confirmed',
@@ -33,6 +34,8 @@ const PAYMENT_METHODS = Object.freeze({
     CARD: 'card',
     APPLE_PAY: 'apple_pay',
     GOOGLE_PAY: 'google_pay',
+    DEMO: 'demo',
+    UNKNOWN: 'unknown',
 });
 const DEFAULT_TIMEZONE = 'Europe/Bucharest';
 const HOURS_LIMIT = 12;
@@ -98,6 +101,7 @@ function normalizePaymentSummary(payload) {
         method,
         last4,
         transactionId,
+        processor: null,
     };
 }
 function createTransactionId() {
@@ -220,6 +224,7 @@ function normalizeStoredBooking(bookingId, payload) {
         userId: (0, shared_1.sanitizeString)(payload?.userId),
         providerId: (0, shared_1.sanitizeString)(payload?.providerId),
         serviceId: (0, shared_1.sanitizeString)(payload?.serviceId),
+        conversationId: (0, shared_1.sanitizeString)(payload?.conversationId) || null,
         status,
         scheduledStartAt: payload?.scheduledStartAt || null,
         scheduledEndAt: payload?.scheduledEndAt || null,
@@ -313,9 +318,12 @@ function buildPaymentDocument({ paymentId, booking, paymentSummary, now, }) {
         method: paymentSummary.method || PAYMENT_METHODS.CARD,
         amount: Number(pricingSnapshot.amount) || 0,
         currency: (0, shared_1.sanitizeString)(pricingSnapshot.currency) || 'RON',
-        processor: 'manual_mvp',
+        processor: paymentSummary.processor || 'manual_mvp',
         last4: paymentSummary.last4 || null,
         transactionId: paymentSummary.transactionId || null,
+        stripePaymentIntentId: paymentSummary.stripePaymentIntentId || null,
+        stripeLatestChargeId: paymentSummary.stripeLatestChargeId || null,
+        stripeStatus: paymentSummary.stripeStatus || null,
         createdAt: booking.createdAt || now,
         updatedAt: now,
         updatedBy: booking.updatedBy || booking.userId,
@@ -328,11 +336,13 @@ function buildBookingDocument({ bookingId, userId, providerId, serviceId, schedu
     const providerDisplayName = (0, shared_1.sanitizeString)(providerData?.professionalProfile?.businessName)
         || (0, shared_1.sanitizeString)(providerData?.professionalProfile?.displayName)
         || 'Prestator';
+    const conversationId = (0, chat_1.bookingConversationId)(bookingId);
     return {
         bookingId,
         userId,
         providerId,
         serviceId,
+        conversationId,
         status: BOOKING_STATUSES.REQUESTED,
         scheduledStartAt,
         scheduledEndAt,
@@ -347,6 +357,8 @@ function buildBookingDocument({ bookingId, userId, providerId, serviceId, schedu
         paymentSummary: {
             ...paymentSummary,
             paymentId,
+            transactionId: paymentSummary.transactionId
+                || (paymentSummary.status === PAYMENT_SUMMARY_STATUSES.PAID ? createTransactionId() : null),
             updatedAt: now,
         },
         userSnapshot: {
@@ -358,6 +370,7 @@ function buildBookingDocument({ bookingId, userId, providerId, serviceId, schedu
         },
         providerSnapshot: {
             displayName: providerDisplayName,
+            avatarPath: (0, shared_1.sanitizeString)(providerData?.professionalProfile?.avatarPath) || null,
             statusAtBookingTime: (0, shared_1.sanitizeString)(providerData.status) || shared_1.PROVIDER_STATUSES.APPROVED,
         },
         serviceSnapshot: {
@@ -454,7 +467,9 @@ async function createBookingRequestService({ db }, userId, rawPayload) {
         if ((0, shared_1.sanitizeString)(serviceData.providerId) !== providerId || (0, shared_1.sanitizeString)(serviceData.status) !== 'active') {
             throw (0, errors_1.failedPrecondition)('Bookings can only target active provider services.');
         }
-        ensureSlotFitsAvailability(availabilitySnap.exists ? availabilitySnap.data() || {} : await (0, providerAvailability_1.fetchProviderAvailabilityProfile)({ db }, providerId), scheduledDateKey, scheduledStartTime, requestDetails.estimatedHours);
+        ensureSlotFitsAvailability(availabilitySnap.exists
+            ? (availabilitySnap.data() || {})
+            : (0, providerAvailability_1.normalizeProviderAvailabilityData)(null), scheduledDateKey, scheduledStartTime, requestDetails.estimatedHours);
         const scheduledStartDate = zonedDateTimeToDate(scheduledDateKey, scheduledStartTime, timezone);
         const scheduledEndDate = new Date(scheduledStartDate.getTime() + (requestDetails.estimatedHours * 60 * 60 * 1000));
         const now = firestore_1.Timestamp.now();
@@ -479,6 +494,12 @@ async function createBookingRequestService({ db }, userId, rawPayload) {
         });
         const paymentRef = db.collection('payments').doc(paymentId);
         transaction.set(bookingRef, booking);
+        (0, chat_1.writeBookingConversationDocuments)({
+            db,
+            transaction,
+            booking,
+            now,
+        });
         transaction.set(paymentRef, buildPaymentDocument({
             paymentId,
             booking,
@@ -562,7 +583,7 @@ async function mutateBooking({ db }, bookingId, actorUid, action, updater) {
         const booking = normalizeStoredBooking(bookingId, bookingSnap.data() || {});
         const now = firestore_1.Timestamp.now();
         const previousStatus = booking.status;
-        const patch = await updater(booking, now);
+        const patch = await updater(booking, now, transaction);
         if (!patch || Object.keys(patch).length === 0) {
             return {
                 booking,
@@ -661,7 +682,7 @@ async function rejectBookingService({ db }, providerId, rawPayload) {
 async function proposeBookingRescheduleService({ db }, providerId, rawPayload) {
     const { bookingId, reason, scheduledDateKey, scheduledStartTime, timezone, } = normalizeActionPayload(rawPayload);
     await getProviderActorForBooking(db, providerId);
-    return mutateBooking({ db }, bookingId, providerId, 'booking.reschedule', async (booking, now) => {
+    return mutateBooking({ db }, bookingId, providerId, 'booking.reschedule', async (booking, now, transaction) => {
         if (booking.providerId !== providerId) {
             throw (0, errors_1.permissionDenied)('Only the assigned provider can reschedule this booking.');
         }
@@ -669,7 +690,11 @@ async function proposeBookingRescheduleService({ db }, providerId, rawPayload) {
             throw (0, errors_1.badRequest)('A new booking date and time are required.');
         }
         assertTransition(booking.status, BOOKING_STATUSES.RESCHEDULE_PROPOSED);
-        const availability = await (0, providerAvailability_1.fetchProviderAvailabilityProfile)({ db }, providerId);
+        const availabilityRef = db.collection('providers').doc(providerId).collection('availability').doc('profile');
+        const availabilitySnap = await transaction.get(availabilityRef);
+        const availability = availabilitySnap.exists
+            ? (availabilitySnap.data() || {})
+            : (0, providerAvailability_1.normalizeProviderAvailabilityData)(null);
         const estimatedHours = normalizeEstimatedHours(booking.requestDetails?.estimatedHours);
         ensureSlotFitsAvailability(availability, scheduledDateKey, scheduledStartTime, estimatedHours);
         const scheduledStartDate = zonedDateTimeToDate(scheduledDateKey, scheduledStartTime, timezone || booking.timezone || DEFAULT_TIMEZONE);
@@ -747,6 +772,9 @@ async function updateBookingPaymentSummaryService({ db }, userId, rawPayload) {
         throw (0, errors_1.badRequest)('Booking id is required.');
     }
     const patch = normalizePaymentSummary(rawPayload.paymentSummary);
+    if (patch.status === PAYMENT_SUMMARY_STATUSES.PAID) {
+        throw (0, errors_1.permissionDenied)('Payment confirmation must be received from the payment processor.');
+    }
     const bookingRef = db.collection('bookings').doc(bookingId);
     const result = await db.runTransaction(async (transaction) => {
         const bookingSnap = await transaction.get(bookingRef);

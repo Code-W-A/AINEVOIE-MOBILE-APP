@@ -86,21 +86,23 @@ export async function fetchProviderReviewAggregate(
     return {
       ratingAverage: 0,
       reviewCount: 0,
+      ratingSum: 0,
     };
   }
 
   const snapshot = await db.collection('reviews')
     .where('providerId', '==', normalizedProviderId)
+    .where('status', '==', 'published')
     .get();
   const reviews = snapshot.docs.map((docSnap) => normalizeStoredReview(docSnap.id, docSnap.data() || {}));
   const reviewCount = reviews.length;
-  const ratingAverage = reviewCount
-    ? reviews.reduce((sum, review) => sum + review.rating, 0) / reviewCount
-    : 0;
+  const ratingSum = reviews.reduce((sum, review) => sum + review.rating, 0);
+  const ratingAverage = reviewCount ? ratingSum / reviewCount : 0;
 
   return {
     ratingAverage: Number(ratingAverage.toFixed(2)),
     reviewCount,
+    ratingSum: Number(ratingSum.toFixed(2)),
   };
 }
 
@@ -161,6 +163,7 @@ export async function saveBookingReviewService(
       providerSnapshot: {
         displayName: sanitizeString(booking.providerSnapshot?.displayName) || 'Prestator',
         providerRole: sanitizeString(booking.serviceSnapshot?.name) || 'Serviciu',
+        avatarPath: sanitizeString(booking.providerSnapshot?.avatarPath) || null,
       },
       serviceSnapshot: {
         serviceId: sanitizeString(booking.serviceId),

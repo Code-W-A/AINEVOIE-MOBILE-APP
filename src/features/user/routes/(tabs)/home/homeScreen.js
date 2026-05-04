@@ -1,9 +1,13 @@
-import React, { useMemo, useState } from "react";
-import { View, StyleSheet, Text, Image, FlatList, TouchableOpacity, Modal, ScrollView, Dimensions } from "react-native";
+import React, { useCallback, useMemo, useState } from "react";
+import { View, StyleSheet, Text, Image, FlatList, TouchableOpacity, Modal, ScrollView, Dimensions, ActivityIndicator } from "react-native";
 import { Fonts } from "../../../../../../constant/styles";
 import { MaterialIcons } from '@expo/vector-icons';
+import { useFocusEffect } from '@react-navigation/native';
 import { useRouter } from "expo-router";
 import MyStatusBar from "../../../../../../components/myStatusBar";
+import { useProviderDirectoryList } from "../../../../../../hooks/useProviderDirectoryList";
+import { useUserPrimaryLocation } from "../../../../../../hooks/useUserPrimaryLocation";
+import { fetchLatestPublicReviews } from "../../../../../firebase/reviews";
 import DiscoverySectionHeader from "../../../../shared/components/DiscoverySectionHeader";
 import {
     AinevoieDiscoveryPrimitives as DiscoveryPrimitives,
@@ -13,90 +17,137 @@ import {
     AinevoieDiscoveryTokens as DiscoveryTokens,
 } from "../../../../shared/styles/discoverySystem";
 import { formatHourlyRate } from "../../../../shared/utils/mockFormatting";
-import { serviceProviders } from "../../../data/serviceProviders";
+import { getServiceCategoryCatalog, resolveServiceCategory } from "../../../../shared/utils/providerServices";
 
-const servicesList = [
-    {
-        id: '1',
-        icon: require('../../../../../../assets/images/icon/white/001-household.png'),
-        serviceType: 'Curățenie',
-    },
-    {
-        id: '2',
-        icon: require('../../../../../../assets/images/icon/white/002-plumber.png'),
-        serviceType: 'Instalații',
-    },
-    {
-        id: '3',
-        icon: require('../../../../../../assets/images/icon/white/003-electrician.png'),
-        serviceType: 'Electrician',
-    },
-    {
-        id: '4',
-        icon: require('../../../../../../assets/images/icon/white/004-painter.png'),
-        serviceType: 'Zugrav',
-    },
-    {
-        id: '5',
-        icon: require('../../../../../../assets/images/icon/white/005-meditation.png'),
-        serviceType: 'Yoga',
-    },
-    {
-        id: '6',
-        icon: require('../../../../../../assets/images/icon/white/006-makeup.png'),
-        serviceType: 'Cosmetică',
-    },
-];
+const SERVICE_CATEGORY_ICON_MAP = {
+    cleaning: require('../../../../../../assets/images/icon/white/001-household.png'),
+    plumbing: require('../../../../../../assets/images/icon/white/002-plumber.png'),
+    electrical: require('../../../../../../assets/images/icon/white/003-electrician.png'),
+    painting: require('../../../../../../assets/images/icon/white/004-painter.png'),
+    yoga: require('../../../../../../assets/images/icon/white/005-meditation.png'),
+    beauty: require('../../../../../../assets/images/icon/white/006-makeup.png'),
+};
 
-const customerReviewsList = [
-    {
-        id: '1',
-        serviceName: 'Curățenie acasă',
-        review: 'Sofia lucrează foarte atent și lasă totul impecabil. O voi rezerva din nou fără ezitare.',
-        customerName: 'Natasha',
-    },
-    {
-        id: '2',
-        serviceName: 'Curățenie acasă',
-        review: 'Curățenie ca la hotel, foarte bine făcută. Sper să accepte și rezervările viitoare.',
-        customerName: 'Menka',
-    },
-    {
-        id: '3',
-        serviceName: 'Mentenanță',
-        review: 'Michael a fost foarte amabil și a oferit un serviciu rapid și eficient. Recomand.',
-        customerName: 'Justine',
-    },
-    {
-        id: '4',
-        serviceName: 'Curățenie acasă',
-        review: 'A ajuns la timp și a lucrat foarte curat. John este cooperant și politicos.',
-        customerName: 'Chaitali',
-    },
-    {
-        id: '5',
-        serviceName: 'Curățenie acasă',
-        review: 'Carla a făcut o treabă excelentă și a fost foarte ușor de coordonat pe tot parcursul.',
-        customerName: 'Claire',
-    },
-];
-
-const citiesList = [
-    { id: 1, name: 'București' },
-    { id: 2, name: 'Cluj-Napoca' },
-];
-
+const PROVIDER_IMAGE_FALLBACK = require('../../../../../../assets/images/provider-role/provider_7.jpg');
+const USER_IMAGE_FALLBACK = require('../../../../../../assets/images/user/user_5.jpg');
 const PROVIDER_CARD_WIDTH = Math.min(Math.round(Dimensions.get('window').width * 0.58), 220);
+
+function normalizeText(value) {
+    return String(value || '').trim().toLowerCase();
+}
+
+function buildProviderRouteItem(provider) {
+    const primaryService = provider.serviceSummaries?.[0] || null;
+
+    return {
+        id: provider.providerId,
+        providerId: provider.providerId,
+        name: provider.displayName,
+        rating: provider.ratingAverage,
+        jobCount: provider.jobCount,
+        ratePerHour: provider.baseRateAmount,
+        baseRateAmount: provider.baseRateAmount,
+        baseRateCurrency: provider.baseRateCurrency,
+        serviceType: primaryService?.categoryLabel || provider.categoryPrimary,
+        description: provider.description,
+        cityName: provider.cityName,
+        coverageAreaText: provider.coverageAreaText,
+        image: provider.avatarUrl ? { uri: provider.avatarUrl } : PROVIDER_IMAGE_FALLBACK,
+    };
+}
 
 const HomeScreen = () => {
     const router = useRouter();
+    const { providers, isLoading: isProvidersLoading } = useProviderDirectoryList();
+    const { location, isLoading: isLocationLoading } = useUserPrimaryLocation();
 
     const [showBottomSheet, setShowBottomSheet] = useState(false);
-    const [currentCityIndex, setCurrentCityIndex] = useState(1);
+    const [publicReviews, setPublicReviews] = useState([]);
+    const [isReviewsLoading, setIsReviewsLoading] = useState(true);
 
-    const currentCity = useMemo(
-        () => citiesList.find((item) => item.id === currentCityIndex)?.name ?? citiesList[0].name,
-        [currentCityIndex]
+    const currentCity = useMemo(() => (
+        location?.cityName || location?.countyName || location?.countryName || 'România'
+    ), [location]);
+
+    const visibleProviders = useMemo(() => {
+        const cityName = normalizeText(location?.cityName);
+
+        if (!cityName) {
+            return providers;
+        }
+
+        return providers.filter((provider) => normalizeText(provider.cityName) === cityName);
+    }, [location?.cityName, providers]);
+
+    const serviceCategories = useMemo(() => {
+        const catalogByKey = new Map(getServiceCategoryCatalog().map((item) => [item.key, item]));
+        const categoryMap = new Map();
+
+        visibleProviders.forEach((provider) => {
+            const services = provider.serviceSummaries?.length
+                ? provider.serviceSummaries.filter((service) => service.isActive !== false)
+                : [{ categoryKey: provider.categoryPrimary, categoryLabel: provider.categoryPrimary }];
+
+            services.forEach((service) => {
+                const category = resolveServiceCategory(service.categoryKey || service.categoryLabel || provider.categoryPrimary);
+                const existingCategory = categoryMap.get(category.key);
+                const catalogCategory = catalogByKey.get(category.key);
+
+                categoryMap.set(category.key, {
+                    id: category.key,
+                    key: category.key,
+                    serviceType: category.label,
+                    icon: SERVICE_CATEGORY_ICON_MAP[category.key] || catalogCategory?.image || SERVICE_CATEGORY_ICON_MAP.cleaning,
+                    providerCount: (existingCategory?.providerCount || 0) + 1,
+                });
+            });
+        });
+
+        return Array.from(categoryMap.values()).sort((firstItem, secondItem) => (
+            secondItem.providerCount - firstItem.providerCount || firstItem.serviceType.localeCompare(secondItem.serviceType)
+        ));
+    }, [visibleProviders]);
+
+    const featuredProviders = useMemo(() => (
+        visibleProviders
+            .slice()
+            .sort((firstItem, secondItem) => (
+                Number(secondItem.ratingAverage || 0) - Number(firstItem.ratingAverage || 0)
+                || Number(secondItem.reviewCount || 0) - Number(firstItem.reviewCount || 0)
+            ))
+            .slice(0, 6)
+    ), [visibleProviders]);
+
+    useFocusEffect(
+        useCallback(() => {
+            let isActive = true;
+
+            async function loadReviews() {
+                setIsReviewsLoading(true);
+
+                try {
+                    const nextReviews = await fetchLatestPublicReviews(8);
+
+                    if (isActive) {
+                        setPublicReviews(nextReviews);
+                    }
+                } catch {
+                    if (isActive) {
+                        setPublicReviews([]);
+                    }
+                } finally {
+                    if (isActive) {
+                        setIsReviewsLoading(false);
+                    }
+                }
+            }
+
+            void loadReviews();
+
+            return () => {
+                isActive = false;
+            };
+        }, []),
     );
 
     return (
@@ -136,41 +187,28 @@ const HomeScreen = () => {
                     <View style={styles.modalBottomWrap}>
                         <TouchableOpacity activeOpacity={1} onPress={() => { }} style={styles.citySheet}>
                             <View style={styles.dragHandle} />
-                            <Text style={styles.citySheetTitle}>Alege orașul</Text>
-                            <Text style={styles.citySheetSubtitle}>Actualizează rapid zona pentru recomandări mai bune.</Text>
-                            {citiesList.map((item) => city({ city: item.name, index: item.id }))}
+                            <Text style={styles.citySheetTitle}>Locația ta</Text>
+                            <Text style={styles.citySheetSubtitle}>Recomandările folosesc locația salvată în profilul tău.</Text>
+                            <View style={styles.cityInfoWrapStyle}>
+                                <View style={styles.locationIconWrap}>
+                                    <MaterialIcons name="location-on" size={18} color={DiscoveryTokens.accent} />
+                                </View>
+                                <Text numberOfLines={2} style={styles.cityText}>{location?.formattedAddress || currentCity}</Text>
+                            </View>
+                            <TouchableOpacity
+                                activeOpacity={0.9}
+                                onPress={() => {
+                                    setShowBottomSheet(false);
+                                    router.push('/user/location/locationScreen');
+                                }}
+                                style={styles.locationManageButton}
+                            >
+                                <Text style={styles.locationManageButtonText}>Actualizează locația</Text>
+                            </TouchableOpacity>
                         </TouchableOpacity>
                     </View>
                 </TouchableOpacity>
             </Modal>
-        );
-    }
-
-    function city({ city, index }) {
-        const isActive = currentCityIndex === index;
-        return (
-            <TouchableOpacity
-                key={`city-${index}`}
-                activeOpacity={0.9}
-                onPress={() => {
-                    setCurrentCityIndex(index);
-                    setShowBottomSheet(false);
-                }}
-                style={[
-                    styles.cityInfoWrapStyle,
-                    isActive ? styles.cityInfoWrapStyleActive : null,
-                ]}
-            >
-                <View style={[styles.selectCityRadioButtonStyle, isActive ? styles.activeCityRadioButton : null]}>
-                    {isActive ? <View style={styles.activeCityRadioButtonDot} /> : null}
-                </View>
-                <Text style={styles.cityText}>{city}</Text>
-                {isActive ? (
-                    <View style={styles.cityActiveChip}>
-                        <Text style={styles.cityActiveChipText}>Activ</Text>
-                    </View>
-                ) : null}
-            </TouchableOpacity>
         );
     }
 
@@ -179,7 +217,7 @@ const HomeScreen = () => {
             <View style={styles.customerReviewCard}>
                 <View style={styles.reviewHeaderRow}>
                     <View style={DiscoveryPrimitives.quietChip}>
-                        <Text style={DiscoveryTypography.chip}>{item.serviceName}</Text>
+                        <Text style={DiscoveryTypography.chip}>{item.serviceName || item.providerRole || 'Serviciu'}</Text>
                     </View>
                     <View style={styles.reviewQuoteWrap}>
                         <MaterialIcons name="format-quote" size={18} color={DiscoveryTokens.accent} />
@@ -188,13 +226,21 @@ const HomeScreen = () => {
                 <Text numberOfLines={4} style={styles.reviewText}>
                     {item.review}
                 </Text>
-                <Text style={styles.customerNameText}>{item.customerName}</Text>
+                <Text style={styles.customerNameText}>{item.authorName}</Text>
             </View>
         );
 
+        if (isReviewsLoading) {
+            return loadingState('Se încarcă recenziile...');
+        }
+
+        if (!publicReviews.length) {
+            return emptyState('Nu există încă recenzii publice.', 'Recenziile vor apărea aici după finalizarea rezervărilor reale.');
+        }
+
         return (
             <FlatList
-                data={customerReviewsList}
+                data={publicReviews}
                 keyExtractor={(item) => `${item.id}`}
                 renderItem={renderItem}
                 horizontal
@@ -214,7 +260,24 @@ const HomeScreen = () => {
         );
     }
 
- 
+    function loadingState(label) {
+        return (
+            <View style={styles.emptyStateCard}>
+                <ActivityIndicator size="small" color={DiscoveryTokens.accent} />
+                <Text style={styles.emptyStateTitle}>{label}</Text>
+            </View>
+        );
+    }
+
+    function emptyState(titleText, bodyText) {
+        return (
+            <View style={styles.emptyStateCard}>
+                <MaterialIcons name="inbox" size={22} color={DiscoveryTokens.accent} />
+                <Text style={styles.emptyStateTitle}>{titleText}</Text>
+                <Text style={styles.emptyStateBody}>{bodyText}</Text>
+            </View>
+        );
+    }
 
     function servicesInfo() {
         const renderItem = ({ item }) => (
@@ -222,7 +285,7 @@ const HomeScreen = () => {
                 activeOpacity={0.9}
                 onPress={() => router.push({
                     pathname: '/user/serviceProviderList/serviceProviderListScreen',
-                    params: { category: item.serviceType },
+                    params: { category: item.serviceType, categoryKey: item.key },
                 })}
                 style={styles.serviceCard}
             >
@@ -243,50 +306,61 @@ const HomeScreen = () => {
                     style={{ marginHorizontal: DiscoverySpacing.xl }}
                 />
                 <View style={styles.servicesInfoWrapStyle}>
-                    <FlatList
-                        data={servicesList}
-                        keyExtractor={(item) => `${item.id}`}
-                        renderItem={renderItem}
-                        horizontal
-                        showsHorizontalScrollIndicator={false}
-                        contentContainerStyle={{ paddingLeft: DiscoverySpacing.xl, paddingRight: DiscoverySpacing.sm }}
-                    />
+                    {isProvidersLoading ? loadingState('Se încarcă serviciile...') : null}
+                    {!isProvidersLoading && serviceCategories.length ? (
+                        <FlatList
+                            data={serviceCategories}
+                            keyExtractor={(item) => `${item.id}`}
+                            renderItem={renderItem}
+                            horizontal
+                            showsHorizontalScrollIndicator={false}
+                            contentContainerStyle={{ paddingLeft: DiscoverySpacing.xl, paddingRight: DiscoverySpacing.sm }}
+                        />
+                    ) : null}
+                    {!isProvidersLoading && !serviceCategories.length
+                        ? emptyState('Nu există servicii disponibile.', 'Serviciile vor apărea aici după aprobarea prestatorilor în Firebase.')
+                        : null}
                 </View>
             </View>
         );
     }
 
     function providersInfo() {
-        const featuredProviders = serviceProviders.slice(0, 6);
+        const renderItem = ({ item }) => {
+            const routeItem = buildProviderRouteItem(item);
 
-        const renderItem = ({ item }) => (
-            <TouchableOpacity
-                activeOpacity={0.9}
-                onPress={() => router.push({ pathname: '/user/serviceProvider/serviceProviderScreen', params: { item: JSON.stringify(item) } })}
-                style={styles.providerCard}
-            >
-                <Image source={item.image} style={styles.providerCardImage} resizeMode="cover" />
-                <View style={styles.providerCardContent}>
-                    <View style={styles.providerMetaRow}>
-                        <View style={styles.providerRateChip}>
-                            <Text style={styles.providerRateChipText}>{formatHourlyRate(item.ratePerHour)}</Text>
+            return (
+                <TouchableOpacity
+                    activeOpacity={0.9}
+                    onPress={() => router.push({
+                        pathname: '/user/serviceProvider/serviceProviderScreen',
+                        params: { providerId: item.providerId, item: JSON.stringify(routeItem) },
+                    })}
+                    style={styles.providerCard}
+                >
+                    <Image source={routeItem.image} style={styles.providerCardImage} resizeMode="cover" />
+                    <View style={styles.providerCardContent}>
+                        <View style={styles.providerMetaRow}>
+                            <View style={styles.providerRateChip}>
+                                <Text style={styles.providerRateChipText}>{formatHourlyRate(item.baseRateAmount, item.baseRateCurrency, 'Tarif nespecificat')}</Text>
+                            </View>
+                            <View style={styles.providerRatingWrap}>
+                                <MaterialIcons name="star" size={14} color={DiscoveryTokens.rating} />
+                                <Text style={styles.providerRatingText}>{Number(item.ratingAverage || 0).toFixed(1)}</Text>
+                            </View>
                         </View>
-                        <View style={styles.providerRatingWrap}>
-                            <MaterialIcons name="star" size={14} color={DiscoveryTokens.rating} />
-                            <Text style={styles.providerRatingText}>{item.rating.toFixed(1)}</Text>
+                        <Text numberOfLines={1} style={styles.providerCardName}>{item.displayName}</Text>
+                        <Text numberOfLines={1} style={styles.providerCardRole}>{item.categoryPrimary || 'Serviciu'} în {item.cityName || currentCity}</Text>
+                        <View style={styles.providerCardFooter}>
+                            <Text style={styles.providerCardJobsText}>{`${Number(item.jobCount || 0)} lucrări finalizate`}</Text>
+                            <View style={styles.providerCardActionIcon}>
+                                <MaterialIcons name="arrow-forward" size={14} color={DiscoveryTokens.accent} />
+                            </View>
                         </View>
                     </View>
-                    <Text numberOfLines={1} style={styles.providerCardName}>{item.name}</Text>
-                    <Text numberOfLines={1} style={styles.providerCardRole}>Specialist disponibil în {currentCity}</Text>
-                    <View style={styles.providerCardFooter}>
-                        <Text style={styles.providerCardJobsText}>{`${item.jobCount} lucrări finalizate`}</Text>
-                        <View style={styles.providerCardActionIcon}>
-                            <MaterialIcons name="arrow-forward" size={14} color={DiscoveryTokens.accent} />
-                        </View>
-                    </View>
-                </View>
-            </TouchableOpacity>
-        );
+                </TouchableOpacity>
+            );
+        };
 
         return (
             <View style={styles.providersSection}>
@@ -298,21 +372,31 @@ const HomeScreen = () => {
                     style={{ marginHorizontal: DiscoverySpacing.xl }}
                 />
                 <View style={styles.providersInfoWrapStyle}>
-                    <FlatList
-                        data={featuredProviders}
-                        keyExtractor={(item) => `${item.id}`}
-                        renderItem={renderItem}
-                        horizontal
-                        nestedScrollEnabled
-                        showsHorizontalScrollIndicator={false}
-                        contentContainerStyle={styles.providersContent}
-                    />
+                    {isProvidersLoading ? loadingState('Se încarcă prestatorii...') : null}
+                    {!isProvidersLoading && featuredProviders.length ? (
+                        <FlatList
+                            data={featuredProviders}
+                            keyExtractor={(item) => `${item.providerId}`}
+                            renderItem={renderItem}
+                            horizontal
+                            nestedScrollEnabled
+                            showsHorizontalScrollIndicator={false}
+                            contentContainerStyle={styles.providersContent}
+                        />
+                    ) : null}
+                    {!isProvidersLoading && !featuredProviders.length
+                        ? emptyState('Nu există prestatori disponibili.', 'Prestatorii aprobați din Firebase vor apărea automat aici.')
+                        : null}
                 </View>
             </View>
         );
     }
 
     function searchTextField() {
+        const hint = serviceCategories.length
+            ? serviceCategories.slice(0, 3).map((item) => item.serviceType).join(', ')
+            : 'Caută în serviciile disponibile';
+
         return (
             <TouchableOpacity
                 activeOpacity={0.9}
@@ -328,7 +412,7 @@ const HomeScreen = () => {
                 </View>
                 <View style={{ flex: 1 }}>
                     <Text style={styles.searchLabel}>Caută un serviciu</Text>
-                    <Text style={styles.searchHint}>Curățenie, instalații, frumusețe și alte servicii utile</Text>
+                    <Text style={styles.searchHint}>{hint}</Text>
                 </View>
                 <View style={styles.searchArrowWrap}>
                     <MaterialIcons name="arrow-forward-ios" size={14} color={DiscoveryTokens.accent} />
@@ -351,7 +435,7 @@ const HomeScreen = () => {
                     <View style={{ marginLeft: DiscoverySpacing.md, flex: 1 }}>
                         <Text style={styles.locationLabel}>Locație</Text>
                         <Text numberOfLines={1} style={styles.locationValue}>
-                            {currentCity}
+                            {isLocationLoading ? 'Se încarcă...' : currentCity}
                         </Text>
                     </View>
                     <View style={styles.locationChevronWrap}>
@@ -363,7 +447,7 @@ const HomeScreen = () => {
                     onPress={() => router.push('/user/(tabs)/profile/profileScreen')}
                     style={styles.profileButton}
                 >
-                    <Image source={require('../../../../../../assets/images/user/user_5.jpg')} style={styles.userImageStyle} />
+                    <Image source={USER_IMAGE_FALLBACK} style={styles.userImageStyle} />
                 </TouchableOpacity>
             </View>
         );
@@ -686,6 +770,24 @@ const styles = StyleSheet.create({
         color: DiscoveryTokens.textPrimary,
         marginTop: DiscoverySpacing.md,
     },
+    emptyStateCard: {
+        ...DiscoveryPrimitives.featureSurface,
+        alignItems: 'center',
+        marginHorizontal: DiscoverySpacing.xl,
+        padding: DiscoverySpacing.lg,
+    },
+    emptyStateTitle: {
+        ...Fonts.blackColor14Bold,
+        color: DiscoveryTokens.textPrimary,
+        textAlign: 'center',
+        marginTop: DiscoverySpacing.sm,
+    },
+    emptyStateBody: {
+        ...DiscoveryTypography.caption,
+        textAlign: 'center',
+        marginTop: DiscoverySpacing.xs,
+        lineHeight: 18,
+    },
     modalBackdrop: {
         flex: 1,
         backgroundColor: DiscoveryTokens.sheetBackdrop,
@@ -761,6 +863,18 @@ const styles = StyleSheet.create({
     cityActiveChipText: {
         ...Fonts.blackColor14Bold,
         color: DiscoveryTokens.accent,
+    },
+    locationManageButton: {
+        minHeight: 50,
+        borderRadius: DiscoveryRadius.pill,
+        backgroundColor: DiscoveryTokens.accent,
+        alignItems: 'center',
+        justifyContent: 'center',
+        paddingHorizontal: DiscoverySpacing.lg,
+    },
+    locationManageButtonText: {
+        ...Fonts.blackColor14Bold,
+        color: DiscoveryTokens.textOnImage,
     },
 });
 

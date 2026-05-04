@@ -12,10 +12,9 @@ import {
   View,
 } from 'react-native';
 import { MaterialCommunityIcons, MaterialIcons } from '@expo/vector-icons';
-import { Snackbar, TextInput } from 'react-native-paper';
-import { useNavigation } from 'expo-router';
+import { Snackbar } from 'react-native-paper';
+import { useLocalSearchParams, useNavigation, useRouter } from 'expo-router';
 import MyStatusBar from '../../../../../components/myStatusBar';
-import Calendar from '../../../../../components/calendar';
 import { Colors } from '../../../../../constant/styles';
 import { useLocale } from '../../../../../context/localeContext';
 import {
@@ -26,14 +25,7 @@ import { AinevoieDiscoveryTokens, AinevoieDiscoveryTypography } from '../../../s
 
 const DEFAULT_RANGE_START = '09:00';
 const DEFAULT_RANGE_END = '17:00';
-const ROMANIA_TIMEZONE = 'Europe/Bucharest';
-
-const dateKeyFormatter = new Intl.DateTimeFormat('en-GB', {
-  timeZone: ROMANIA_TIMEZONE,
-  year: 'numeric',
-  month: '2-digit',
-  day: '2-digit',
-});
+const SAVE_TIMEOUT_MS = 20000;
 
 function buildTimeOptions() {
   const options = [];
@@ -57,34 +49,6 @@ function createEmptySchedule(locale = 'ro') {
     isEnabled: false,
     timeRanges: [],
   }));
-}
-
-function getFormatterParts(formatter, date) {
-  return formatter.formatToParts(date).reduce((accumulator, part) => {
-    if (part.type !== 'literal') {
-      accumulator[part.type] = part.value;
-    }
-
-    return accumulator;
-  }, {});
-}
-
-function getRomaniaDateKey(date = new Date()) {
-  const { day, month, year } = getFormatterParts(dateKeyFormatter, date);
-  return `${year}-${month}-${day}`;
-}
-
-function dateKeyToDate(dateKey) {
-  const [year, month, day] = String(dateKey).split('-').map(Number);
-  return new Date(Date.UTC(year, month - 1, day, 12, 0, 0));
-}
-
-function capitalizeFirstLetter(value) {
-  if (!value) {
-    return value;
-  }
-
-  return value.charAt(0).toUpperCase() + value.slice(1);
 }
 
 function minutesFromTime(time) {
@@ -158,30 +122,37 @@ function getNextDefaultRange(timeRanges) {
   };
 }
 
+function withTimeout(promise, timeoutMs, errorMessage) {
+  let timeoutId;
+  const timeoutPromise = new Promise((_, reject) => {
+    timeoutId = setTimeout(() => {
+      reject(new Error(errorMessage));
+    }, timeoutMs);
+  });
+
+  return Promise.race([promise, timeoutPromise]).finally(() => {
+    clearTimeout(timeoutId);
+  });
+}
+
 export default function ProviderAvailabilityScreen() {
   const navigation = useNavigation();
+  const router = useRouter();
+  const { source } = useLocalSearchParams();
   const { locale, t } = useLocale();
   const {
     data,
     isLoading,
+    canEditAvailability,
     hasConfiguredAvailability,
-    blockedDateKeys,
     saveProviderAvailability,
   } = useProviderAvailability();
   const [draftSchedule, setDraftSchedule] = useState(() => createEmptySchedule(locale));
   const [dayErrors, setDayErrors] = useState({});
   const [snackbarMessage, setSnackbarMessage] = useState('');
   const [pickerState, setPickerState] = useState(null);
-  const [selectedBlockedDate, setSelectedBlockedDate] = useState(() => getRomaniaDateKey(new Date()));
-  const [blockedDateNote, setBlockedDateNote] = useState('');
-  const [blockedDateError, setBlockedDateError] = useState('');
-  const fullDateFormatter = useMemo(() => new Intl.DateTimeFormat(locale === 'en' ? 'en-US' : 'ro-RO', {
-    timeZone: ROMANIA_TIMEZONE,
-    weekday: 'long',
-    day: 'numeric',
-    month: 'long',
-    year: 'numeric',
-  }), [locale]);
+  const [copyState, setCopyState] = useState(null);
+  const [isSaving, setIsSaving] = useState(false);
 
   useEffect(() => {
     setDraftSchedule(data.weekSchedule);
@@ -191,10 +162,9 @@ export default function ProviderAvailabilityScreen() {
     () => !draftSchedule.some((day) => day.isEnabled && day.timeRanges.length > 0),
     [draftSchedule]
   );
-
-  function formatBlockedDateLabel(dateKey) {
-    return capitalizeFirstLetter(fullDateFormatter.format(dateKeyToDate(dateKey)));
-  }
+  const shouldReturnToProviderOnboarding = Array.isArray(source)
+    ? source.includes('providerOnboarding')
+    : source === 'providerOnboarding';
 
   function updateDay(dayKey, updater) {
     setDraftSchedule((currentSchedule) => currentSchedule.map((day) => (
@@ -244,31 +214,99 @@ export default function ProviderAvailabilityScreen() {
     setDayErrors((currentErrors) => ({ ...currentErrors, [pickerState.dayKey]: undefined }));
   }
 
-  function handleCopyToWeekdays() {
-    const sourceDay = draftSchedule.find((day) => day.isEnabled && day.timeRanges.length > 0);
-
-    if (!sourceDay) {
-      setSnackbarMessage(t('providerAvailability.copiedMissing'));
+  function openCopyModal(sourceDay) {
+    if (!sourceDay.isEnabled || !sourceDay.timeRanges.length) {
       return;
     }
 
-    const weekdayKeys = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday'];
+    setCopyState({
+      sourceDayKey: sourceDay.dayKey,
+      selectedDayKeys: [],
+    });
+  }
+
+  function closeCopyModal() {
+    setCopyState(null);
+  }
+
+  function toggleCopyTarget(dayKey) {
+    setCopyState((currentState) => {
+      if (!currentState) {
+        return currentState;
+      }
+
+      const isSelected = currentState.selectedDayKeys.includes(dayKey);
+
+      return {
+        ...currentState,
+        selectedDayKeys: isSelected
+          ? currentState.selectedDayKeys.filter((selectedDayKey) => selectedDayKey !== dayKey)
+          : [...currentState.selectedDayKeys, dayKey],
+      };
+    });
+  }
+
+  function handleCopyIntervalsRequest() {
+    if (!copyState?.selectedDayKeys.length) {
+      setSnackbarMessage(t('providerAvailability.copyIntervalsSelectAtLeastOne'));
+      return;
+    }
+
+    Alert.alert(
+      t('providerAvailability.copyIntervalsConfirmTitle'),
+      t('providerAvailability.copyIntervalsConfirmBody'),
+      [
+        { text: t('providerAvailability.resetCancel'), style: 'cancel' },
+        {
+          text: t('providerAvailability.copyIntervalsConfirmAction'),
+          onPress: applyCopiedIntervals,
+        },
+      ]
+    );
+  }
+
+  function applyCopiedIntervals() {
+    if (!copyState?.sourceDayKey || !copyState.selectedDayKeys.length) {
+      return;
+    }
+
+    const sourceDay = draftSchedule.find((day) => day.dayKey === copyState.sourceDayKey);
+
+    if (!sourceDay?.timeRanges?.length) {
+      closeCopyModal();
+      return;
+    }
+
+    const copiedRanges = sourceDay.timeRanges.map((range) => ({
+      startTime: range.startTime,
+      endTime: range.endTime,
+    }));
 
     setDraftSchedule((currentSchedule) => currentSchedule.map((day) => {
-      if (!weekdayKeys.includes(day.dayKey)) {
+      if (!copyState.selectedDayKeys.includes(day.dayKey)) {
         return day;
       }
 
       return {
         ...day,
         isEnabled: true,
-        timeRanges: sourceDay.timeRanges.map((range, index) => ({
-          ...range,
-          id: `${day.dayKey}_${index}_${range.startTime}_${range.endTime}`,
+        timeRanges: copiedRanges.map((range, index) => ({
+          id: `${day.dayKey}_${Date.now()}_${index}_${range.startTime}_${range.endTime}`,
+          startTime: range.startTime,
+          endTime: range.endTime,
         })),
       };
     }));
-    setSnackbarMessage(t('providerAvailability.copiedSuccess'));
+
+    setDayErrors((currentErrors) => {
+      const nextErrors = { ...currentErrors };
+      copyState.selectedDayKeys.forEach((dayKey) => {
+        delete nextErrors[dayKey];
+      });
+      return nextErrors;
+    });
+    closeCopyModal();
+    setSnackbarMessage(t('providerAvailability.copyIntervalsSuccess'));
   }
 
   function handleResetSchedule() {
@@ -290,66 +328,88 @@ export default function ProviderAvailabilityScreen() {
     );
   }
 
+  function handleExit() {
+    if (shouldReturnToProviderOnboarding) {
+      router.replace({
+        pathname: '/auth/providerOnboardingScreen',
+        params: { step: 'professional' },
+      });
+      return;
+    }
+
+    navigation.goBack();
+  }
+
   async function handleSave() {
+    if (isSaving) {
+      console.log('[ProviderAvailabilityScreen][handleSave:ignored]', { reason: 'already_saving' });
+      return;
+    }
+
+    if (isLoading) {
+      console.log('[ProviderAvailabilityScreen][handleSave:ignored]', { reason: 'availability_loading' });
+      setSnackbarMessage(t('providerAvailability.loading'));
+      return;
+    }
+
     const nextErrors = validateSchedule(draftSchedule, t);
     setDayErrors(nextErrors);
 
     if (Object.keys(nextErrors).length > 0) {
+      console.log('[ProviderAvailabilityScreen][handleSave:validation_error]', {
+        errorDays: Object.keys(nextErrors),
+      });
       setSnackbarMessage(t('providerAvailability.saveValidationError'));
       return;
     }
 
-    await saveProviderAvailability((current) => ({
-      ...current,
-      weekSchedule: draftSchedule,
-    }));
-    setSnackbarMessage(t('providerAvailability.saveSuccess'));
-  }
-
-  async function handleAddBlockedDate() {
-    if (!selectedBlockedDate) {
-      setBlockedDateError(t('providerAvailability.selectDateError'));
-      return;
-    }
-
-    await saveProviderAvailability((current) => {
-      const existingDates = Array.isArray(current.blockedDates) ? current.blockedDates : [];
-      const existingIndex = existingDates.findIndex((item) => item.dateKey === selectedBlockedDate);
-      const nextBlockedDate = {
-        id: existingIndex >= 0 ? existingDates[existingIndex].id : `blocked_${Date.now()}`,
-        dateKey: selectedBlockedDate,
-        note: blockedDateNote.trim(),
-        createdAt: existingIndex >= 0 ? existingDates[existingIndex].createdAt : new Date().toISOString(),
-      };
-      const nextBlockedDates = [...existingDates];
-
-      if (existingIndex >= 0) {
-        nextBlockedDates[existingIndex] = nextBlockedDate;
-      } else {
-        nextBlockedDates.push(nextBlockedDate);
-      }
-
-      return {
-        ...current,
-        blockedDates: nextBlockedDates,
-      };
+    console.log('[ProviderAvailabilityScreen][handleSave:start]', {
+      source,
+      canEditAvailability,
+      enabledDayCount: draftSchedule.filter((day) => day.isEnabled && day.timeRanges.length > 0).length,
     });
 
-    setBlockedDateNote('');
-    setBlockedDateError('');
-    setSnackbarMessage(
-      blockedDateKeys.includes(selectedBlockedDate)
-        ? t('providerAvailability.blockedUpdated')
-        : t('providerAvailability.blockedAdded')
-    );
-  }
+    setIsSaving(true);
 
-  async function handleRemoveBlockedDate(blockedDateId) {
-    await saveProviderAvailability((current) => ({
-      ...current,
-      blockedDates: (current.blockedDates || []).filter((item) => item.id !== blockedDateId),
-    }));
-    setSnackbarMessage(t('providerAvailability.blockedRemoved'));
+    try {
+      await withTimeout(
+        saveProviderAvailability((current) => ({
+          ...current,
+          weekSchedule: draftSchedule,
+          blockedDates: [],
+        })),
+        SAVE_TIMEOUT_MS,
+        t('providerAvailability.saveTimeout')
+      );
+
+      console.log('[ProviderAvailabilityScreen][handleSave:success]', {
+        source,
+        shouldReturnToProviderOnboarding,
+      });
+
+      if (shouldReturnToProviderOnboarding) {
+        router.replace({
+          pathname: '/auth/providerOnboardingScreen',
+          params: { step: 'professional' },
+        });
+        return;
+      }
+
+      setSnackbarMessage(t('providerAvailability.saveSuccess'));
+    } catch (error) {
+      console.error('[ProviderAvailabilityScreen][handleSave:error]', {
+        source,
+        canEditAvailability,
+        code: error?.code,
+        message: error?.message,
+        details: error?.details,
+      });
+      const message = error instanceof Error ? error.message : t('providerAvailability.saveError');
+      setSnackbarMessage(message || t('providerAvailability.saveError'));
+      Alert.alert(t('providerAvailability.saveErrorTitle'), message || t('providerAvailability.saveError'));
+    } finally {
+      setIsSaving(false);
+    }
   }
 
   return (
@@ -357,14 +417,13 @@ export default function ProviderAvailabilityScreen() {
       <MyStatusBar />
       {renderHeader()}
       <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.scrollContentStyle}>
-        {renderTopActions()}
-        {renderBlockedDatesSection()}
         {!hasConfiguredAvailability && isDraftEmpty ? renderEmptyState() : null}
         {isLoading ? renderLoadingState() : null}
         {!isLoading ? draftSchedule.map(renderDayCard) : null}
       </ScrollView>
       {renderFooter()}
       {renderTimePickerModal()}
+      {renderCopyIntervalsModal()}
       <Snackbar visible={Boolean(snackbarMessage)} onDismiss={() => setSnackbarMessage('')} duration={2400}>
         {snackbarMessage}
       </Snackbar>
@@ -374,26 +433,11 @@ export default function ProviderAvailabilityScreen() {
   function renderHeader() {
     return (
       <View style={styles.headerWrapStyle}>
-        <TouchableOpacity activeOpacity={0.88} onPress={() => navigation.goBack()} style={styles.headerBackButtonStyle}>
+        <TouchableOpacity activeOpacity={0.88} onPress={handleExit} style={styles.headerBackButtonStyle}>
           <MaterialIcons name="arrow-back" size={22} color={AinevoieDiscoveryTokens.textPrimary} />
         </TouchableOpacity>
         <Text style={styles.headerTitleStyle}>{t('providerAvailability.headerTitle')}</Text>
         <Text style={styles.headerSubtitleStyle}>{t('providerAvailability.headerSubtitle')}</Text>
-      </View>
-    );
-  }
-
-  function renderTopActions() {
-    return (
-      <View style={styles.topActionsRowStyle}>
-        <TouchableOpacity activeOpacity={0.88} onPress={handleCopyToWeekdays} style={styles.secondaryActionButtonStyle}>
-          <MaterialCommunityIcons name="content-copy" size={18} color={AinevoieDiscoveryTokens.textPrimary} />
-          <Text style={styles.secondaryActionTextStyle}>{t('providerAvailability.copyWeekdays')}</Text>
-        </TouchableOpacity>
-        <TouchableOpacity activeOpacity={0.88} onPress={handleResetSchedule} style={styles.resetActionButtonStyle}>
-          <MaterialCommunityIcons name="restart" size={18} color="#D94841" />
-          <Text style={styles.resetActionTextStyle}>{t('providerAvailability.reset')}</Text>
-        </TouchableOpacity>
       </View>
     );
   }
@@ -415,73 +459,6 @@ export default function ProviderAvailabilityScreen() {
       <View style={styles.loadingWrapStyle}>
         <ActivityIndicator size="small" color={AinevoieDiscoveryTokens.accent} />
         <Text style={styles.loadingTextStyle}>{t('providerAvailability.loading')}</Text>
-      </View>
-    );
-  }
-
-  function renderBlockedDatesSection() {
-    return (
-      <View style={styles.blockedDatesCardStyle}>
-        <Text style={styles.blockedDatesTitleStyle}>{t('providerAvailability.blockedDatesTitle')}</Text>
-        <Text style={styles.blockedDatesSubtitleStyle}>{t('providerAvailability.blockedDatesSubtitle')}</Text>
-
-        <View style={styles.calendarWrapStyle}>
-          <Calendar
-            disabledDateKeys={blockedDateKeys}
-            onSelectDate={(dateKey) => {
-              setSelectedBlockedDate(dateKey);
-              if (blockedDateError) {
-                setBlockedDateError('');
-              }
-            }}
-            selected={selectedBlockedDate}
-          />
-        </View>
-
-        <TextInput
-          label={t('providerAvailability.noteLabel')}
-          mode="outlined"
-          value={blockedDateNote}
-          onChangeText={setBlockedDateNote}
-          placeholder={t('providerAvailability.notePlaceholder')}
-          outlineColor={blockedDateError ? '#D94841' : AinevoieDiscoveryTokens.borderSubtle}
-          activeOutlineColor={AinevoieDiscoveryTokens.accent}
-          textColor={AinevoieDiscoveryTokens.textPrimary}
-          selectionColor={AinevoieDiscoveryTokens.accent}
-          theme={{
-            colors: {
-              background: AinevoieDiscoveryTokens.surfaceCard,
-              onSurfaceVariant: AinevoieDiscoveryTokens.textSecondary,
-              primary: AinevoieDiscoveryTokens.accent,
-            },
-            roundness: 20,
-          }}
-          style={styles.blockedDateInputStyle}
-        />
-        {blockedDateError ? <Text style={styles.errorTextStyle}>{blockedDateError}</Text> : null}
-
-        <TouchableOpacity activeOpacity={0.9} onPress={() => { void handleAddBlockedDate(); }} style={styles.blockedDateButtonStyle}>
-          <MaterialIcons name="block" size={18} color={Colors.whiteColor} />
-          <Text style={styles.blockedDateButtonTextStyle}>{t('providerAvailability.blockSelectedDate')}</Text>
-        </TouchableOpacity>
-
-        {(data.blockedDates || []).length ? (
-          <View style={styles.blockedDatesListWrapStyle}>
-            {(data.blockedDates || []).map((item) => (
-              <View key={item.id} style={styles.blockedDateRowStyle}>
-                <View style={styles.blockedDateTextWrapStyle}>
-                  <Text style={styles.blockedDateLabelStyle}>{formatBlockedDateLabel(item.dateKey)}</Text>
-                  <Text style={styles.blockedDateMetaStyle}>{item.note || t('providerAvailability.noExtraNote')}</Text>
-                </View>
-                <TouchableOpacity activeOpacity={0.88} onPress={() => { void handleRemoveBlockedDate(item.id); }} style={styles.blockedDateDeleteButtonStyle}>
-                  <MaterialIcons name="close" size={18} color="#D94841" />
-                </TouchableOpacity>
-              </View>
-            ))}
-          </View>
-        ) : (
-          <Text style={styles.blockedDateEmptyTextStyle}>{t('providerAvailability.blockedEmpty')}</Text>
-        )}
       </View>
     );
   }
@@ -545,6 +522,11 @@ export default function ProviderAvailabilityScreen() {
               <MaterialIcons name="add" size={18} color={AinevoieDiscoveryTokens.accentDark} />
               <Text style={styles.addRangeButtonTextStyle}>{t('providerAvailability.addRange')}</Text>
             </TouchableOpacity>
+
+            <TouchableOpacity activeOpacity={0.88} onPress={() => openCopyModal(day)} style={styles.copyIntervalsButtonStyle}>
+              <MaterialCommunityIcons name="content-copy" size={18} color={AinevoieDiscoveryTokens.textPrimary} />
+              <Text style={styles.copyIntervalsButtonTextStyle}>{t('providerAvailability.copyIntervals')}</Text>
+            </TouchableOpacity>
           </>
         ) : null}
 
@@ -556,10 +538,24 @@ export default function ProviderAvailabilityScreen() {
   function renderFooter() {
     return (
       <View style={styles.footerWrapStyle}>
-        <TouchableOpacity activeOpacity={0.88} onPress={() => navigation.goBack()} style={styles.secondaryFooterButtonStyle}>
-          <Text style={styles.secondaryFooterButtonTextStyle}>{t('providerAvailability.cancel')}</Text>
+        <TouchableOpacity
+          activeOpacity={0.88}
+          onPress={handleResetSchedule}
+          style={[styles.resetFooterButtonStyle, isSaving ? styles.footerButtonDisabledStyle : null]}
+          disabled={isSaving}
+        >
+          <MaterialCommunityIcons name="restart" size={18} color="#D94841" />
+          <Text style={styles.resetFooterButtonTextStyle}>{t('providerAvailability.reset')}</Text>
         </TouchableOpacity>
-        <TouchableOpacity activeOpacity={0.9} onPress={() => { void handleSave(); }} style={styles.saveButtonStyle}>
+        <TouchableOpacity
+          activeOpacity={0.9}
+          onPress={() => { void handleSave(); }}
+          style={[styles.saveButtonStyle, isSaving || isLoading ? styles.footerButtonDisabledStyle : null]}
+          disabled={isSaving || isLoading}
+        >
+          {isSaving ? (
+            <ActivityIndicator size="small" color={Colors.whiteColor} style={styles.saveButtonSpinnerStyle} />
+          ) : null}
           <Text style={styles.saveButtonTextStyle}>{t('providerAvailability.saveSchedule')}</Text>
         </TouchableOpacity>
       </View>
@@ -611,6 +607,87 @@ export default function ProviderAvailabilityScreen() {
       </Modal>
     );
   }
+
+  function renderCopyIntervalsModal() {
+    if (!copyState) {
+      return null;
+    }
+
+    const sourceDay = draftSchedule.find((day) => day.dayKey === copyState.sourceDayKey);
+    const sourceRanges = sourceDay?.timeRanges || [];
+    const targetDays = draftSchedule.filter((day) => day.dayKey !== copyState.sourceDayKey);
+    const hasSelectedTargets = copyState.selectedDayKeys.length > 0;
+
+    return (
+      <Modal animationType="slide" visible onRequestClose={closeCopyModal}>
+        <View style={styles.copyModalScreenStyle}>
+          <MyStatusBar />
+          <View style={styles.copyModalHeaderStyle}>
+            <TouchableOpacity activeOpacity={0.88} onPress={closeCopyModal} style={styles.headerBackButtonStyle}>
+              <MaterialIcons name="close" size={22} color={AinevoieDiscoveryTokens.textPrimary} />
+            </TouchableOpacity>
+            <Text style={styles.copyModalTitleStyle}>
+              {t('providerAvailability.copyIntervalsTitle', { day: sourceDay?.label || '' })}
+            </Text>
+            <Text style={styles.copyModalSubtitleStyle}>{t('providerAvailability.copyIntervalsSubtitle')}</Text>
+          </View>
+
+          <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.copyModalContentStyle}>
+            <View style={styles.copySummaryCardStyle}>
+              <Text style={styles.copySummaryTitleStyle}>{sourceDay?.label || ''}</Text>
+              <View style={styles.copySummaryRangesStyle}>
+                {sourceRanges.map((range) => (
+                  <View key={`${range.id}-${range.startTime}-${range.endTime}`} style={styles.copyRangeChipStyle}>
+                    <Text style={styles.copyRangeChipTextStyle}>{`${range.startTime} - ${range.endTime}`}</Text>
+                  </View>
+                ))}
+              </View>
+            </View>
+
+            {targetDays.map((day) => {
+              const isSelected = copyState.selectedDayKeys.includes(day.dayKey);
+              const hasSchedule = day.isEnabled && day.timeRanges.length > 0;
+
+              return (
+                <TouchableOpacity
+                  key={day.dayKey}
+                  activeOpacity={0.88}
+                  onPress={() => toggleCopyTarget(day.dayKey)}
+                  style={[styles.copyTargetRowStyle, isSelected ? styles.copyTargetRowActiveStyle : null]}
+                >
+                  <View style={[styles.copyTargetCheckStyle, isSelected ? styles.copyTargetCheckActiveStyle : null]}>
+                    {isSelected ? <MaterialIcons name="check" size={18} color={Colors.whiteColor} /> : null}
+                  </View>
+                  <View style={styles.copyTargetTextWrapStyle}>
+                    <Text style={styles.copyTargetTitleStyle}>{day.label}</Text>
+                    <Text style={styles.copyTargetSubtitleStyle}>
+                      {hasSchedule
+                        ? t('providerAvailability.copyIntervalsTargetHasSchedule')
+                        : t('providerAvailability.copyIntervalsTargetEmpty')}
+                    </Text>
+                  </View>
+                </TouchableOpacity>
+              );
+            })}
+          </ScrollView>
+
+          <View style={styles.copyModalFooterStyle}>
+            <TouchableOpacity activeOpacity={0.88} onPress={closeCopyModal} style={styles.copyModalSecondaryButtonStyle}>
+              <Text style={styles.copyModalSecondaryButtonTextStyle}>{t('providerAvailability.cancel')}</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              activeOpacity={0.9}
+              onPress={handleCopyIntervalsRequest}
+              disabled={!hasSelectedTargets}
+              style={[styles.copyModalPrimaryButtonStyle, !hasSelectedTargets ? styles.copyModalPrimaryButtonDisabledStyle : null]}
+            >
+              <Text style={styles.copyModalPrimaryButtonTextStyle}>{t('providerAvailability.copyIntervals')}</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+    );
+  }
 }
 
 const styles = StyleSheet.create({
@@ -647,45 +724,6 @@ const styles = StyleSheet.create({
     paddingTop: 8,
     paddingBottom: 128,
   },
-  topActionsRowStyle: {
-    flexDirection: 'row',
-    marginBottom: 16,
-  },
-  secondaryActionButtonStyle: {
-    flex: 1,
-    minHeight: 48,
-    borderRadius: 18,
-    backgroundColor: AinevoieDiscoveryTokens.surfaceMuted,
-    borderWidth: 1,
-    borderColor: AinevoieDiscoveryTokens.borderSubtle,
-    alignItems: 'center',
-    justifyContent: 'center',
-    flexDirection: 'row',
-    marginRight: 8,
-    paddingHorizontal: 14,
-  },
-  secondaryActionTextStyle: {
-    ...AinevoieDiscoveryTypography.caption,
-    color: AinevoieDiscoveryTokens.textPrimary,
-    marginLeft: 8,
-    textAlign: 'center',
-  },
-  resetActionButtonStyle: {
-    minHeight: 48,
-    borderRadius: 18,
-    backgroundColor: '#FFF5F4',
-    borderWidth: 1,
-    borderColor: '#F5C8C4',
-    alignItems: 'center',
-    justifyContent: 'center',
-    flexDirection: 'row',
-    paddingHorizontal: 16,
-  },
-  resetActionTextStyle: {
-    ...AinevoieDiscoveryTypography.caption,
-    color: '#D94841',
-    marginLeft: 8,
-  },
   emptyStateWrapStyle: {
     backgroundColor: AinevoieDiscoveryTokens.surfaceCard,
     borderRadius: 28,
@@ -695,87 +733,6 @@ const styles = StyleSheet.create({
     paddingVertical: 24,
     alignItems: 'center',
     marginBottom: 16,
-  },
-  blockedDatesCardStyle: {
-    backgroundColor: AinevoieDiscoveryTokens.surfaceCard,
-    borderRadius: 28,
-    borderWidth: 1,
-    borderColor: AinevoieDiscoveryTokens.borderSubtle,
-    paddingHorizontal: 18,
-    paddingVertical: 18,
-    marginBottom: 16,
-  },
-  blockedDatesTitleStyle: {
-    ...AinevoieDiscoveryTypography.sectionTitle,
-    color: AinevoieDiscoveryTokens.textPrimary,
-  },
-  blockedDatesSubtitleStyle: {
-    ...AinevoieDiscoveryTypography.bodyMuted,
-    marginTop: 8,
-  },
-  calendarWrapStyle: {
-    marginTop: 16,
-  },
-  blockedDateInputStyle: {
-    marginTop: 16,
-    backgroundColor: AinevoieDiscoveryTokens.surfaceCard,
-  },
-  blockedDateButtonStyle: {
-    minHeight: 50,
-    borderRadius: 18,
-    backgroundColor: AinevoieDiscoveryTokens.accent,
-    alignItems: 'center',
-    justifyContent: 'center',
-    flexDirection: 'row',
-    marginTop: 14,
-  },
-  blockedDateButtonTextStyle: {
-    ...AinevoieDiscoveryTypography.body,
-    color: Colors.whiteColor,
-    fontWeight: '700',
-    marginLeft: 8,
-  },
-  blockedDatesListWrapStyle: {
-    marginTop: 16,
-  },
-  blockedDateRowStyle: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: AinevoieDiscoveryTokens.surfaceMuted,
-    borderRadius: 20,
-    borderWidth: 1,
-    borderColor: AinevoieDiscoveryTokens.borderSubtle,
-    paddingHorizontal: 14,
-    paddingVertical: 12,
-    marginBottom: 10,
-  },
-  blockedDateTextWrapStyle: {
-    flex: 1,
-    marginRight: 10,
-  },
-  blockedDateLabelStyle: {
-    ...AinevoieDiscoveryTypography.body,
-    color: AinevoieDiscoveryTokens.textPrimary,
-    fontWeight: '700',
-  },
-  blockedDateMetaStyle: {
-    ...AinevoieDiscoveryTypography.caption,
-    marginTop: 4,
-  },
-  blockedDateDeleteButtonStyle: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: '#FFF5F4',
-    borderWidth: 1,
-    borderColor: '#F5C8C4',
-  },
-  blockedDateEmptyTextStyle: {
-    ...AinevoieDiscoveryTypography.caption,
-    color: AinevoieDiscoveryTokens.textSecondary,
-    marginTop: 14,
   },
   emptyStateIconWrapStyle: {
     width: 48,
@@ -889,6 +846,23 @@ const styles = StyleSheet.create({
     marginLeft: 8,
     fontWeight: '700',
   },
+  copyIntervalsButtonStyle: {
+    minHeight: 46,
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: AinevoieDiscoveryTokens.borderSubtle,
+    backgroundColor: AinevoieDiscoveryTokens.surfaceCard,
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexDirection: 'row',
+    marginTop: 10,
+  },
+  copyIntervalsButtonTextStyle: {
+    ...AinevoieDiscoveryTypography.body,
+    color: AinevoieDiscoveryTokens.textPrimary,
+    marginLeft: 8,
+    fontWeight: '700',
+  },
   errorTextStyle: {
     ...AinevoieDiscoveryTypography.caption,
     color: '#D94841',
@@ -906,22 +880,26 @@ const styles = StyleSheet.create({
     borderTopWidth: 1,
     borderTopColor: AinevoieDiscoveryTokens.borderSubtle,
     flexDirection: 'row',
+    alignItems: 'center',
   },
-  secondaryFooterButtonStyle: {
+  resetFooterButtonStyle: {
     flex: 1,
     minHeight: 54,
     borderRadius: 18,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: AinevoieDiscoveryTokens.surfaceMuted,
+    flexDirection: 'row',
+    backgroundColor: '#FFF5F4',
     borderWidth: 1,
-    borderColor: AinevoieDiscoveryTokens.borderSubtle,
+    borderColor: '#F5C8C4',
+    paddingHorizontal: 14,
     marginRight: 10,
   },
-  secondaryFooterButtonTextStyle: {
-    ...AinevoieDiscoveryTypography.body,
-    color: AinevoieDiscoveryTokens.textPrimary,
+  resetFooterButtonTextStyle: {
+    ...AinevoieDiscoveryTypography.caption,
+    color: '#D94841',
     fontWeight: '700',
+    marginLeft: 6,
   },
   saveButtonStyle: {
     flex: 1,
@@ -929,13 +907,20 @@ const styles = StyleSheet.create({
     borderRadius: 18,
     alignItems: 'center',
     justifyContent: 'center',
+    flexDirection: 'row',
     backgroundColor: AinevoieDiscoveryTokens.accent,
     marginLeft: 10,
+  },
+  saveButtonSpinnerStyle: {
+    marginRight: 8,
   },
   saveButtonTextStyle: {
     ...AinevoieDiscoveryTypography.body,
     color: Colors.whiteColor,
     fontWeight: '700',
+  },
+  footerButtonDisabledStyle: {
+    opacity: 0.56,
   },
   modalOverlayStyle: {
     flex: 1,
@@ -994,6 +979,152 @@ const styles = StyleSheet.create({
   },
   timeOptionTextActiveStyle: {
     color: AinevoieDiscoveryTokens.accentDark,
+    fontWeight: '700',
+  },
+  copyModalScreenStyle: {
+    flex: 1,
+    backgroundColor: AinevoieDiscoveryTokens.appBackground,
+  },
+  copyModalHeaderStyle: {
+    paddingHorizontal: 24,
+    paddingTop: 18,
+    paddingBottom: 12,
+  },
+  copyModalTitleStyle: {
+    ...AinevoieDiscoveryTypography.screenTitle,
+    color: AinevoieDiscoveryTokens.textPrimary,
+    marginTop: 6,
+  },
+  copyModalSubtitleStyle: {
+    ...AinevoieDiscoveryTypography.bodyMuted,
+    marginTop: 8,
+  },
+  copyModalContentStyle: {
+    paddingHorizontal: 24,
+    paddingTop: 8,
+    paddingBottom: 128,
+  },
+  copySummaryCardStyle: {
+    backgroundColor: AinevoieDiscoveryTokens.surfaceCard,
+    borderRadius: 24,
+    borderWidth: 1,
+    borderColor: AinevoieDiscoveryTokens.borderSubtle,
+    paddingHorizontal: 18,
+    paddingVertical: 18,
+    marginBottom: 16,
+  },
+  copySummaryTitleStyle: {
+    ...AinevoieDiscoveryTypography.sectionTitle,
+    color: AinevoieDiscoveryTokens.textPrimary,
+  },
+  copySummaryRangesStyle: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    marginTop: 12,
+  },
+  copyRangeChipStyle: {
+    borderRadius: 999,
+    backgroundColor: AinevoieDiscoveryTokens.surfaceAccent,
+    borderWidth: 1,
+    borderColor: AinevoieDiscoveryTokens.accent,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    marginRight: 8,
+    marginBottom: 8,
+  },
+  copyRangeChipTextStyle: {
+    ...AinevoieDiscoveryTypography.caption,
+    color: AinevoieDiscoveryTokens.accentDark,
+    fontWeight: '700',
+  },
+  copyTargetRowStyle: {
+    minHeight: 72,
+    borderRadius: 22,
+    borderWidth: 1,
+    borderColor: AinevoieDiscoveryTokens.borderSubtle,
+    backgroundColor: AinevoieDiscoveryTokens.surfaceCard,
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    marginBottom: 12,
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  copyTargetRowActiveStyle: {
+    borderColor: AinevoieDiscoveryTokens.accent,
+    backgroundColor: AinevoieDiscoveryTokens.surfaceAccent,
+  },
+  copyTargetCheckStyle: {
+    width: 30,
+    height: 30,
+    borderRadius: 15,
+    borderWidth: 1,
+    borderColor: AinevoieDiscoveryTokens.borderSubtle,
+    backgroundColor: AinevoieDiscoveryTokens.surfaceMuted,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 12,
+  },
+  copyTargetCheckActiveStyle: {
+    borderColor: AinevoieDiscoveryTokens.accent,
+    backgroundColor: AinevoieDiscoveryTokens.accent,
+  },
+  copyTargetTextWrapStyle: {
+    flex: 1,
+  },
+  copyTargetTitleStyle: {
+    ...AinevoieDiscoveryTypography.body,
+    color: AinevoieDiscoveryTokens.textPrimary,
+    fontWeight: '700',
+  },
+  copyTargetSubtitleStyle: {
+    ...AinevoieDiscoveryTypography.caption,
+    color: AinevoieDiscoveryTokens.textSecondary,
+    marginTop: 4,
+  },
+  copyModalFooterStyle: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    bottom: 0,
+    paddingHorizontal: 24,
+    paddingTop: 12,
+    paddingBottom: 22,
+    backgroundColor: AinevoieDiscoveryTokens.surfaceCard,
+    borderTopWidth: 1,
+    borderTopColor: AinevoieDiscoveryTokens.borderSubtle,
+    flexDirection: 'row',
+  },
+  copyModalSecondaryButtonStyle: {
+    flex: 1,
+    minHeight: 54,
+    borderRadius: 18,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: AinevoieDiscoveryTokens.surfaceMuted,
+    borderWidth: 1,
+    borderColor: AinevoieDiscoveryTokens.borderSubtle,
+    marginRight: 10,
+  },
+  copyModalSecondaryButtonTextStyle: {
+    ...AinevoieDiscoveryTypography.body,
+    color: AinevoieDiscoveryTokens.textPrimary,
+    fontWeight: '700',
+  },
+  copyModalPrimaryButtonStyle: {
+    flex: 1,
+    minHeight: 54,
+    borderRadius: 18,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: AinevoieDiscoveryTokens.accent,
+    marginLeft: 10,
+  },
+  copyModalPrimaryButtonDisabledStyle: {
+    opacity: 0.48,
+  },
+  copyModalPrimaryButtonTextStyle: {
+    ...AinevoieDiscoveryTypography.body,
+    color: Colors.whiteColor,
     fontWeight: '700',
   },
 });

@@ -160,6 +160,10 @@ export async function resolveCoveragePlaceSelectionService(
   const resolvedHierarchy = resolveRomaniaCoverageHierarchy({
     countryName: getAddressComponent(result, ['country']),
     countyName: getAddressComponent(result, ['administrative_area_level_1', 'political']),
+    sublocality: getAddressComponent(result, ['sublocality_level_1', 'political'])
+      || getAddressComponent(result, ['sublocality', 'political'])
+      || getAddressComponent(result, ['administrative_area_level_2', 'political']),
+    district: getAddressComponent(result, ['administrative_area_level_3', 'political']),
     cityName: getAddressComponent(result, ['locality', 'political'])
       || getAddressComponent(result, ['administrative_area_level_3', 'political'])
       || getAddressComponent(result, ['postal_town', 'political']),

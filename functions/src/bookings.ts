@@ -1,10 +1,11 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { Firestore, Timestamp } from 'firebase-admin/firestore';
+import { Firestore, Timestamp, Transaction } from 'firebase-admin/firestore';
 import { writeAuditEvent } from './audit';
 import { badRequest, failedPrecondition, internalError, permissionDenied } from './errors';
 import { writeStructuredLog } from './logging';
 import { PROVIDER_STATUSES, sanitizeString } from './shared';
-import { fetchProviderAvailabilityProfile } from './providerAvailability';
+import { normalizeProviderAvailabilityData } from './providerAvailability';
+import { bookingConversationId, writeBookingConversationDocuments } from './chat';
 
 type BookingDeps = {
   db: Firestore,
@@ -59,6 +60,8 @@ const PAYMENT_METHODS = Object.freeze({
   CARD: 'card',
   APPLE_PAY: 'apple_pay',
   GOOGLE_PAY: 'google_pay',
+  DEMO: 'demo',
+  UNKNOWN: 'unknown',
 });
 
 const DEFAULT_TIMEZONE = 'Europe/Bucharest';
@@ -143,6 +146,7 @@ function normalizePaymentSummary(payload: CreateBookingPayload['paymentSummary']
     method,
     last4,
     transactionId,
+    processor: null,
   };
 }
 
@@ -303,6 +307,7 @@ function normalizeStoredBooking(bookingId: string, payload: Record<string, any>)
     userId: sanitizeString(payload?.userId),
     providerId: sanitizeString(payload?.providerId),
     serviceId: sanitizeString(payload?.serviceId),
+    conversationId: sanitizeString(payload?.conversationId) || null,
     status,
     scheduledStartAt: payload?.scheduledStartAt || null,
     scheduledEndAt: payload?.scheduledEndAt || null,
@@ -422,9 +427,12 @@ function buildPaymentDocument({
     method: paymentSummary.method || PAYMENT_METHODS.CARD,
     amount: Number(pricingSnapshot.amount) || 0,
     currency: sanitizeString(pricingSnapshot.currency) || 'RON',
-    processor: 'manual_mvp',
+    processor: paymentSummary.processor || 'manual_mvp',
     last4: paymentSummary.last4 || null,
     transactionId: paymentSummary.transactionId || null,
+    stripePaymentIntentId: paymentSummary.stripePaymentIntentId || null,
+    stripeLatestChargeId: paymentSummary.stripeLatestChargeId || null,
+    stripeStatus: paymentSummary.stripeStatus || null,
     createdAt: booking.createdAt || now,
     updatedAt: now,
     updatedBy: booking.updatedBy || booking.userId,
@@ -470,12 +478,14 @@ function buildBookingDocument({
   const providerDisplayName = sanitizeString(providerData?.professionalProfile?.businessName)
     || sanitizeString(providerData?.professionalProfile?.displayName)
     || 'Prestator';
+  const conversationId = bookingConversationId(bookingId);
 
   return {
     bookingId,
     userId,
     providerId,
     serviceId,
+    conversationId,
     status: BOOKING_STATUSES.REQUESTED,
     scheduledStartAt,
     scheduledEndAt,
@@ -490,6 +500,8 @@ function buildBookingDocument({
     paymentSummary: {
       ...paymentSummary,
       paymentId,
+      transactionId: paymentSummary.transactionId
+        || (paymentSummary.status === PAYMENT_SUMMARY_STATUSES.PAID ? createTransactionId() : null),
       updatedAt: now,
     },
     userSnapshot: {
@@ -501,6 +513,7 @@ function buildBookingDocument({
     },
     providerSnapshot: {
       displayName: providerDisplayName,
+      avatarPath: sanitizeString(providerData?.professionalProfile?.avatarPath) || null,
       statusAtBookingTime: sanitizeString(providerData.status) || PROVIDER_STATUSES.APPROVED,
     },
     serviceSnapshot: {
@@ -624,7 +637,9 @@ export async function createBookingRequestService(
     }
 
     ensureSlotFitsAvailability(
-      availabilitySnap.exists ? availabilitySnap.data() || {} : await fetchProviderAvailabilityProfile({ db }, providerId),
+      availabilitySnap.exists
+        ? (availabilitySnap.data() || {})
+        : normalizeProviderAvailabilityData(null),
       scheduledDateKey,
       scheduledStartTime,
       requestDetails.estimatedHours,
@@ -655,6 +670,12 @@ export async function createBookingRequestService(
     const paymentRef = db.collection('payments').doc(paymentId);
 
     transaction.set(bookingRef, booking);
+    writeBookingConversationDocuments({
+      db,
+      transaction,
+      booking,
+      now,
+    });
     transaction.set(paymentRef, buildPaymentDocument({
       paymentId,
       booking,
@@ -746,7 +767,11 @@ async function mutateBooking(
   bookingId: string,
   actorUid: string,
   action: string,
-  updater: (booking: Record<string, any>, now: Timestamp) => Promise<Record<string, any> | null> | Record<string, any> | null,
+  updater: (
+    booking: Record<string, any>,
+    now: Timestamp,
+    transaction: Transaction,
+  ) => Promise<Record<string, any> | null> | Record<string, any> | null,
 ) {
   const bookingRef = db.collection('bookings').doc(bookingId);
   const result = await db.runTransaction(async (transaction) => {
@@ -759,7 +784,7 @@ async function mutateBooking(
     const booking = normalizeStoredBooking(bookingId, bookingSnap.data() || {});
     const now = Timestamp.now();
     const previousStatus = booking.status;
-    const patch = await updater(booking, now);
+    const patch = await updater(booking, now, transaction);
 
     if (!patch || Object.keys(patch).length === 0) {
       return {
@@ -895,7 +920,7 @@ export async function proposeBookingRescheduleService(
   } = normalizeActionPayload(rawPayload);
   await getProviderActorForBooking(db, providerId);
 
-  return mutateBooking({ db }, bookingId, providerId, 'booking.reschedule', async (booking, now) => {
+  return mutateBooking({ db }, bookingId, providerId, 'booking.reschedule', async (booking, now, transaction) => {
     if (booking.providerId !== providerId) {
       throw permissionDenied('Only the assigned provider can reschedule this booking.');
     }
@@ -905,7 +930,11 @@ export async function proposeBookingRescheduleService(
     }
 
     assertTransition(booking.status, BOOKING_STATUSES.RESCHEDULE_PROPOSED);
-    const availability = await fetchProviderAvailabilityProfile({ db }, providerId);
+    const availabilityRef = db.collection('providers').doc(providerId).collection('availability').doc('profile');
+    const availabilitySnap = await transaction.get(availabilityRef);
+    const availability = availabilitySnap.exists
+      ? (availabilitySnap.data() || {})
+      : normalizeProviderAvailabilityData(null);
     const estimatedHours = normalizeEstimatedHours(booking.requestDetails?.estimatedHours);
     ensureSlotFitsAvailability(availability, scheduledDateKey, scheduledStartTime, estimatedHours);
 
@@ -1018,6 +1047,10 @@ export async function updateBookingPaymentSummaryService(
   }
 
   const patch = normalizePaymentSummary(rawPayload.paymentSummary);
+
+  if (patch.status === PAYMENT_SUMMARY_STATUSES.PAID) {
+    throw permissionDenied('Payment confirmation must be received from the payment processor.');
+  }
   const bookingRef = db.collection('bookings').doc(bookingId);
   const result = await db.runTransaction(async (transaction) => {
     const bookingSnap = await transaction.get(bookingRef);

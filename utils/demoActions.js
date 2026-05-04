@@ -1,4 +1,3 @@
-import * as ImagePicker from 'expo-image-picker';
 import { Alert, Linking } from 'react-native';
 import { tr } from '../src/features/shared/localization';
 
@@ -87,54 +86,5 @@ export async function handleDemoCall(name) {
       tr('demo.callUnavailableTitle'),
       tr('demo.demoNumber', { phoneNumber }),
     );
-  }
-}
-
-export async function pickDemoAvatar(source) {
-  try {
-    const permission = source === 'camera'
-      ? await ImagePicker.requestCameraPermissionsAsync()
-      : await ImagePicker.requestMediaLibraryPermissionsAsync();
-
-    if (permission.status !== 'granted') {
-      Alert.alert(
-        tr('auth.providerOnboarding.permissionTitle'),
-        source === 'camera'
-          ? tr('demo.cameraPermissionBody')
-          : tr('demo.galleryPermissionBody')
-      );
-      return null;
-    }
-
-    const result = source === 'camera'
-      ? await ImagePicker.launchCameraAsync({
-          allowsEditing: true,
-          aspect: [1, 1],
-          quality: 0.7,
-        })
-      : await ImagePicker.launchImageLibraryAsync({
-          mediaTypes: ['images'],
-          allowsEditing: true,
-          aspect: [1, 1],
-          quality: 0.7,
-        });
-
-    if (result.canceled || !result.assets?.length) {
-      return null;
-    }
-
-    const asset = result.assets[0];
-
-    return {
-      uri: asset.uri,
-      fileName: asset.fileName || asset.uri.split('/').pop() || 'image.jpg',
-      mimeType: asset.mimeType || 'image/jpeg',
-    };
-  } catch {
-    Alert.alert(
-      tr('demo.imageUnavailableTitle'),
-      tr('demo.imageUnavailableBody'),
-    );
-    return null;
   }
 }

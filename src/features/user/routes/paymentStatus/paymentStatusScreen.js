@@ -7,56 +7,92 @@ import { Colors, Fonts } from '../../../../../constant/styles';
 import { useLocale } from '../../../../../context/localeContext';
 import { DiscoveryPrimitives, DiscoveryRadius, DiscoverySpacing, DiscoveryTypography } from '../../../shared/styles/discoverySystem';
 import { useUserBookings } from '../../../../../hooks/useUserBookings';
+import { fetchBookingDoc } from '../../../../firebase/bookings';
 import { formatMoney } from '../../../shared/utils/mockFormatting';
 import { getPaymentMethodLabel, getPaymentStatusUi } from '../../../shared/utils/paymentUi';
 
 export default function PaymentStatusScreen() {
   const router = useRouter();
   const params = useLocalSearchParams();
-  const { t } = useLocale();
-  const { getBookingById, updateBookingPayment } = useUserBookings();
+  const { t, locale } = useLocale();
+  const { getBookingById, isLoading } = useUserBookings();
 
   const bookingId = typeof params.bookingId === 'string' ? params.bookingId : null;
-  const paymentOutcome = typeof params.paymentOutcome === 'string' ? params.paymentOutcome : '';
+  const isStripeProcessingReturn = params.processing === '1';
   const booking = bookingId ? getBookingById(bookingId) : null;
-
-  const [phase, setPhase] = useState('processing');
-  const shouldFail = paymentOutcome === 'failed'
-    || (paymentOutcome !== 'success' && booking?.payment?.method === 'card' && booking?.payment?.last4 === '0000');
+  const [fallbackBooking, setFallbackBooking] = useState(null);
+  const [isFallbackLoading, setIsFallbackLoading] = useState(false);
 
   useEffect(() => {
-    if (!bookingId) {
-      return;
+    if (booking || !bookingId || isLoading) {
+      return undefined;
     }
 
-    setPhase('processing');
-
-    const timer = setTimeout(() => {
-      void updateBookingPayment(bookingId, { status: shouldFail ? 'failed' : 'paid' }).finally(() => {
-        setPhase(shouldFail ? 'failed' : 'success');
+    let cancelled = false;
+    setIsFallbackLoading(true);
+    fetchBookingDoc(bookingId, locale)
+      .then((next) => {
+        if (!cancelled && next) {
+          setFallbackBooking(next);
+        }
+      })
+      .catch(() => undefined)
+      .finally(() => {
+        if (!cancelled) {
+          setIsFallbackLoading(false);
+        }
       });
-    }, 1300);
 
-    return () => clearTimeout(timer);
-  }, [bookingId, shouldFail, updateBookingPayment]);
+    return () => {
+      cancelled = true;
+    };
+  }, [booking, bookingId, isLoading, locale]);
 
-  const totalLabel = useMemo(() => formatMoney(booking?.price?.amount ?? 0, booking?.price?.currency), [booking?.price?.amount, booking?.price?.currency]);
-  const methodLabel = useMemo(() => getPaymentMethodLabel(booking?.payment?.method, booking?.payment?.last4), [booking?.payment?.last4, booking?.payment?.method]);
-  const phaseStatusUi = useMemo(() => {
-    if (phase === 'processing') {
-      return getPaymentStatusUi('in_progress');
+  useEffect(() => {
+    if (!bookingId || !isStripeProcessingReturn) {
+      return undefined;
     }
 
-    if (phase === 'failed') {
-      return getPaymentStatusUi('failed');
-    }
+    let cancelled = false;
+    let attempts = 0;
+    const poll = async () => {
+      attempts += 1;
+      const next = await fetchBookingDoc(bookingId, locale).catch(() => null);
 
-    return getPaymentStatusUi('paid');
-  }, [phase]);
+      if (cancelled) {
+        return;
+      }
 
-  const isProcessing = phase === 'processing';
-  const isSuccess = phase === 'success';
-  const isFailed = phase === 'failed';
+      if (next) {
+        setFallbackBooking(next);
+      }
+
+      const status = next?.payment?.status;
+      if (!['paid', 'failed'].includes(status) && attempts < 8) {
+        setTimeout(poll, 2000);
+      }
+    };
+
+    void poll();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [bookingId, isStripeProcessingReturn, locale]);
+
+  const resolvedBooking = fallbackBooking || booking;
+  const storedPaymentStatus = resolvedBooking?.payment?.status;
+  const paymentStatus = isStripeProcessingReturn && !['paid', 'failed'].includes(storedPaymentStatus)
+    ? 'in_progress'
+    : (storedPaymentStatus || (isLoading || isFallbackLoading ? 'in_progress' : 'unpaid'));
+
+  const totalLabel = useMemo(() => formatMoney(resolvedBooking?.price?.amount ?? 0, resolvedBooking?.price?.currency), [resolvedBooking?.price?.amount, resolvedBooking?.price?.currency]);
+  const methodLabel = useMemo(() => getPaymentMethodLabel(resolvedBooking?.payment?.method, resolvedBooking?.payment?.last4), [resolvedBooking?.payment?.last4, resolvedBooking?.payment?.method]);
+  const phaseStatusUi = useMemo(() => getPaymentStatusUi(paymentStatus), [paymentStatus]);
+
+  const isProcessing = paymentStatus === 'in_progress' || ((isLoading || isFallbackLoading) && !resolvedBooking);
+  const isSuccess = paymentStatus === 'paid';
+  const isFailed = paymentStatus === 'failed';
 
   const titleText = isSuccess
     ? t('payment.statusSuccessTitle')
@@ -68,14 +104,14 @@ export default function PaymentStatusScreen() {
     : isFailed
       ? t('payment.statusFailedSubtitle')
       : t('payment.statusProcessingSubtitle');
-  const transactionLabel = booking?.payment?.transactionId || (isFailed ? t('payment.unavailable') : t('payment.generating'));
+  const transactionLabel = resolvedBooking?.payment?.transactionId || '—';
 
   function handleRetry() {
     if (!bookingId) {
       return;
     }
 
-    router.replace({ pathname: '/user/paymentMethod/paymentMethodScreen', params: { bookingId } });
+    router.replace({ pathname: '/user/checkout/checkoutScreen', params: { bookingId } });
   }
 
   function handleBackToCheckout() {
@@ -84,6 +120,27 @@ export default function PaymentStatusScreen() {
     }
 
     router.replace({ pathname: '/user/checkout/checkoutScreen', params: { bookingId } });
+  }
+
+  if (!bookingId || (!isLoading && !isFallbackLoading && !resolvedBooking)) {
+    return (
+      <View style={styles.screen}>
+        <MyStatusBar backgroundColor={Colors.discoveryDarkColor} />
+        <View style={styles.brandBackdrop} />
+        <View style={styles.contentWrap}>
+          <View style={styles.statusCard}>
+            <View style={styles.failedIcon}>
+              <MaterialIcons name="close" size={22} color={Colors.whiteColor} />
+            </View>
+            <Text style={styles.titleText}>{t('payment.unavailable')}</Text>
+            <Text style={styles.subtitleText}>Rezervarea nu există în Firebase sau nu mai este disponibilă.</Text>
+          </View>
+          <TouchableOpacity activeOpacity={0.92} onPress={() => router.replace('/user/(tabs)/booking/bookingScreen')} style={styles.primaryButton}>
+            <Text style={styles.primaryButtonText}>{t('payment.continue')}</Text>
+          </TouchableOpacity>
+        </View>
+      </View>
+    );
   }
 
   return (
@@ -128,12 +185,12 @@ export default function PaymentStatusScreen() {
             </View>
           </View>
 
-          {booking?.providerName ? (
+          {resolvedBooking?.providerName ? (
             <View style={styles.providerRow}>
               <View style={styles.providerBadge}>
                 <MaterialCommunityIcons name="account-outline" size={16} color={Colors.discoveryMutedColor} />
               </View>
-              <Text style={styles.providerText} numberOfLines={1}>{booking.providerName}</Text>
+              <Text style={styles.providerText} numberOfLines={1}>{resolvedBooking.providerName}</Text>
             </View>
           ) : null}
         </View>
@@ -151,7 +208,7 @@ export default function PaymentStatusScreen() {
           <TouchableOpacity
             activeOpacity={0.92}
             disabled={!isSuccess}
-            onPress={() => router.replace('/user/bookingSuccess/bookingSuccessScreen')}
+            onPress={() => router.replace('/user/(tabs)/booking/bookingScreen')}
             style={[styles.primaryButton, !isSuccess ? styles.primaryButtonDisabled : null]}
           >
             <Text style={styles.primaryButtonText}>{isSuccess ? t('payment.continue') : t('payment.processing')}</Text>

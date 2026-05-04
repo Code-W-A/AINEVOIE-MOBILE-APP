@@ -14,12 +14,12 @@ import { useNavigation, useRouter } from 'expo-router';
 import MyStatusBar from '../../../../components/myStatusBar';
 import { useLocale } from '../../../../context/localeContext';
 import { useSession } from '../../../../context/sessionContext';
-import { useDemoAvatar } from '../../../../hooks/useDemoAvatar';
+import { useProfileAvatar } from '../../../../hooks/useProfileAvatar';
 import { useProviderAvailability } from '../../../../hooks/useProviderAvailability';
 import { useProviderOnboarding } from '../../../../hooks/useProviderOnboarding';
 import { useUserProfile } from '../../../../hooks/useUserProfile';
 import { useUserPrimaryLocation } from '../../../../hooks/useUserPrimaryLocation';
-import { pickDemoAvatar } from '../../../../utils/demoActions';
+import { pickProfileAvatar } from '../../../../utils/profileAvatarPicker';
 import { getRoleDisplayConfig } from '../config/roleDisplayConfig';
 import { DEFAULT_MOCK_CURRENCY, digitsOnly, formatRateDisplay, normalizeRateValue } from '../utils/mockFormatting';
 import { AinevoieDiscoveryTokens, AinevoieDiscoveryTypography } from '../styles/discoverySystem';
@@ -27,6 +27,7 @@ import ChatTopBar from '../components/chat/ChatTopBar';
 import ChatCircleButton from '../components/chat/ChatCircleButton';
 import { buildCoverageAreaPatch, normalizeCoverageAreaForm } from '../utils/providerCoverage';
 import CoverageAreaEditor from '../components/profile/CoverageAreaEditor';
+import ProfileAvatarCropModal from '../components/profile/ProfileAvatarCropModal';
 
 export default function SharedEditProfileScreen({ role }) {
   const navigation = useNavigation();
@@ -35,7 +36,7 @@ export default function SharedEditProfileScreen({ role }) {
   const { session } = useSession();
   const normalizedRole = role === 'provider' ? 'provider' : 'user';
   const roleConfig = getRoleDisplayConfig(normalizedRole, t);
-  const { avatarUri, saveAvatar } = useDemoAvatar(normalizedRole);
+  const { avatarUri, saveAvatar } = useProfileAvatar(normalizedRole);
   const { data: providerOnboarding, saveProviderOnboarding } = useProviderOnboarding();
   const { availabilitySummary, availabilityDayChips, hasConfiguredAvailability } = useProviderAvailability();
   const { data: userProfile, saveUserProfile } = useUserProfile();
@@ -51,6 +52,9 @@ export default function SharedEditProfileScreen({ role }) {
     shortBio: '',
     availabilitySummary: '',
     showBottomSheet: false,
+    cropAvatarAsset: null,
+    isAvatarSaving: false,
+    avatarSaveError: '',
   });
 
   const avatarSource = useMemo(
@@ -112,17 +116,62 @@ export default function SharedEditProfileScreen({ role }) {
     coverageAreaConfig,
     shortBio,
     showBottomSheet,
+    cropAvatarAsset,
+    isAvatarSaving,
+    avatarSaveError,
   } = state;
 
   async function handleAvatarPick(source) {
     updateState({ showBottomSheet: false });
-    const asset = await pickDemoAvatar(source);
+    const asset = await pickProfileAvatar(source, {
+      allowsEditing: normalizedRole !== 'provider',
+    });
 
     if (!asset?.uri) {
       return;
     }
 
+    if (normalizedRole === 'provider') {
+      updateState({
+        cropAvatarAsset: asset,
+        avatarSaveError: '',
+      });
+      return;
+    }
+
     await saveAvatar(asset.uri, asset);
+  }
+
+  async function handleCroppedAvatarSave(croppedAsset) {
+    updateState({
+      isAvatarSaving: true,
+      avatarSaveError: '',
+    });
+
+    try {
+      await saveAvatar(croppedAsset.uri, croppedAsset);
+      updateState({
+        cropAvatarAsset: null,
+        isAvatarSaving: false,
+        avatarSaveError: '',
+      });
+    } catch {
+      updateState({
+        isAvatarSaving: false,
+        avatarSaveError: 'Poza nu a putut fi salvata. Verifica conexiunea si incearca din nou.',
+      });
+    }
+  }
+
+  function closeAvatarCrop() {
+    if (isAvatarSaving) {
+      return;
+    }
+
+    updateState({
+      cropAvatarAsset: null,
+      avatarSaveError: '',
+    });
   }
 
   function renderHeader() {
@@ -444,6 +493,14 @@ export default function SharedEditProfileScreen({ role }) {
         </View>
       </ScrollView>
       {renderBottomSheet()}
+      <ProfileAvatarCropModal
+        visible={Boolean(cropAvatarAsset)}
+        asset={cropAvatarAsset}
+        isSaving={isAvatarSaving}
+        errorText={avatarSaveError}
+        onCancel={closeAvatarCrop}
+        onSave={handleCroppedAvatarSave}
+      />
     </View>
   );
 }

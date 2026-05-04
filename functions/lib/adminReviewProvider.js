@@ -8,30 +8,19 @@ const claims_1 = require("./claims");
 const providerDirectory_1 = require("./providerDirectory");
 const shared_1 = require("./shared");
 const logging_1 = require("./logging");
-const providerCoverage_1 = require("./providerCoverage");
-const providerAvailability_1 = require("./providerAvailability");
-function hasUploadedDocuments(providerData) {
-    return providerData.documents?.identity?.status === 'uploaded'
-        && (0, shared_1.sanitizeString)(providerData.documents?.identity?.storagePath)
-        && providerData.documents?.professional?.status === 'uploaded'
-        && (0, shared_1.sanitizeString)(providerData.documents?.professional?.storagePath);
-}
-function hasCompleteProfessionalProfile(providerData) {
-    const profile = providerData.professionalProfile || {};
-    const baseRateAmount = Number(profile.baseRateAmount);
-    return Boolean((0, shared_1.sanitizeString)(profile.businessName)
-        && (0, shared_1.sanitizeString)(profile.displayName)
-        && (0, shared_1.sanitizeString)(profile.specialization)
-        && (0, providerCoverage_1.hasCompleteCoverageArea)(profile.coverageArea)
-        && (0, shared_1.sanitizeString)(profile.shortBio)
-        && Number.isFinite(baseRateAmount)
-        && baseRateAmount > 0);
-}
 function resolveNextProviderStatus(currentStatus, action) {
-    if (action === shared_1.PROVIDER_REVIEW_ACTIONS.APPROVE && currentStatus === shared_1.PROVIDER_STATUSES.PENDING_REVIEW) {
+    const isApprovableStatus = [
+        shared_1.PROVIDER_STATUSES.PRE_REGISTERED,
+        shared_1.PROVIDER_STATUSES.PENDING_REVIEW,
+        shared_1.PROVIDER_STATUSES.REJECTED,
+        'new',
+        'in_review',
+    ].includes(currentStatus);
+    const isRejectableStatus = currentStatus === shared_1.PROVIDER_STATUSES.PENDING_REVIEW || currentStatus === 'in_review';
+    if (action === shared_1.PROVIDER_REVIEW_ACTIONS.APPROVE && isApprovableStatus) {
         return shared_1.PROVIDER_STATUSES.APPROVED;
     }
-    if (action === shared_1.PROVIDER_REVIEW_ACTIONS.REJECT && currentStatus === shared_1.PROVIDER_STATUSES.PENDING_REVIEW) {
+    if (action === shared_1.PROVIDER_REVIEW_ACTIONS.REJECT && isRejectableStatus) {
         return shared_1.PROVIDER_STATUSES.REJECTED;
     }
     if (action === shared_1.PROVIDER_REVIEW_ACTIONS.SUSPEND && currentStatus === shared_1.PROVIDER_STATUSES.APPROVED) {
@@ -65,13 +54,6 @@ async function adminReviewProviderService({ db, auth }, reviewerUid, reviewerRol
     const nextStatus = resolveNextProviderStatus(currentStatus, action);
     if (!nextStatus) {
         throw (0, errors_1.failedPrecondition)('Invalid provider status transition.');
-    }
-    const availabilityProfile = await (0, providerAvailability_1.fetchProviderAvailabilityProfile)({ db }, providerId);
-    if (nextStatus === shared_1.PROVIDER_STATUSES.APPROVED
-        && (!hasCompleteProfessionalProfile(providerData)
-            || !hasUploadedDocuments(providerData)
-            || !(0, providerAvailability_1.hasConfiguredAvailability)(availabilityProfile.weekSchedule))) {
-        throw (0, errors_1.failedPrecondition)('Provider profile is incomplete and cannot be approved.');
     }
     await providerRef.set({
         status: nextStatus,

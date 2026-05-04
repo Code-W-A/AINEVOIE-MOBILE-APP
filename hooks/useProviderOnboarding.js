@@ -1,4 +1,3 @@
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useFocusEffect } from '@react-navigation/native';
 import { useCallback, useMemo, useRef, useState } from 'react';
 import { toUiProviderVerificationStatus } from '@ainevoie/firebase-shared';
@@ -6,9 +5,6 @@ import { useSession } from '../context/sessionContext';
 import { fetchProviderProfile, mapProviderDocToHookData, saveProviderProfilePatch } from '../src/firebase/profileStore';
 import { normalizeRateValue } from '../src/features/shared/utils/mockFormatting';
 import { buildCoverageAreaPatch, normalizeCoverageAreaForm } from '../src/features/shared/utils/providerCoverage';
-
-const PROVIDER_ONBOARDING_STORAGE_KEY = '@ainevoie/provider-onboarding';
-const LEGACY_PROVIDER_ONBOARDING_STORAGE_KEY = '@urbanhome/provider-onboarding';
 
 const defaultProviderOnboarding = {
   account: {
@@ -35,28 +31,6 @@ const defaultProviderOnboarding = {
   completedAt: null,
   updatedAt: null,
 };
-
-async function readStoredProviderOnboarding() {
-  try {
-    const storedValue = await AsyncStorage.getItem(PROVIDER_ONBOARDING_STORAGE_KEY);
-
-    if (storedValue) {
-      return JSON.parse(storedValue);
-    }
-
-    const legacyValue = await AsyncStorage.getItem(LEGACY_PROVIDER_ONBOARDING_STORAGE_KEY);
-
-    if (!legacyValue) {
-      return defaultProviderOnboarding;
-    }
-
-    await AsyncStorage.setItem(PROVIDER_ONBOARDING_STORAGE_KEY, legacyValue);
-    await AsyncStorage.removeItem(LEGACY_PROVIDER_ONBOARDING_STORAGE_KEY);
-    return JSON.parse(legacyValue);
-  } catch {
-    return defaultProviderOnboarding;
-  }
-}
 
 function normalizeProviderOnboarding(payload) {
   const normalizedBaseRate = normalizeRateValue(payload?.professionalProfile?.baseRate || '');
@@ -90,8 +64,16 @@ export function useProviderOnboarding() {
   const { session } = useSession();
   const [data, setData] = useState(defaultProviderOnboarding);
   const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState(null);
   const latestDataRef = useRef(defaultProviderOnboarding);
   const saveRequestIdRef = useRef(0);
+
+  const canUseRemote = Boolean(
+    session.isAuthenticated
+    && session.activeRole === 'provider'
+    && session.uid
+    && !session.configError,
+  );
 
   const applyData = useCallback((nextValue) => {
     latestDataRef.current = nextValue;
@@ -100,30 +82,33 @@ export function useProviderOnboarding() {
   }, []);
 
   const loadProviderOnboarding = useCallback(async () => {
-    setIsLoading(true);
-    const storedValue = await readStoredProviderOnboarding();
-    const localValue = normalizeProviderOnboarding(storedValue);
-
-    if (session.isAuthenticated && session.activeRole === 'provider' && session.uid && !session.configError) {
-      try {
-        const remoteProfile = await fetchProviderProfile(session.uid);
-
-        if (remoteProfile) {
-          applyData(normalizeProviderOnboarding({
-            ...localValue,
-            ...mapProviderDocToHookData(remoteProfile, localValue),
-            verificationStatus: toUiProviderVerificationStatus(remoteProfile.status),
-          }));
-          setIsLoading(false);
-          return;
-        }
-      } catch {
-      }
+    if (!canUseRemote) {
+      setIsLoading(false);
+      return normalizeProviderOnboarding(latestDataRef.current);
     }
 
-    applyData(localValue);
-    setIsLoading(false);
-  }, [applyData, session.activeRole, session.configError, session.isAuthenticated, session.uid]);
+    setIsLoading(true);
+    setError(null);
+
+    try {
+      const remoteProfile = await fetchProviderProfile(session.uid);
+      const nextValue = remoteProfile
+        ? normalizeProviderOnboarding({
+            ...defaultProviderOnboarding,
+            ...mapProviderDocToHookData(remoteProfile, defaultProviderOnboarding),
+            verificationStatus: toUiProviderVerificationStatus(remoteProfile.status),
+          })
+        : defaultProviderOnboarding;
+      applyData(nextValue);
+      setIsLoading(false);
+      return nextValue;
+    } catch (nextError) {
+      setError(nextError);
+      applyData(defaultProviderOnboarding);
+      setIsLoading(false);
+      return defaultProviderOnboarding;
+    }
+  }, [applyData, canUseRemote, session.uid]);
 
   useFocusEffect(
     useCallback(() => {
@@ -142,45 +127,45 @@ export function useProviderOnboarding() {
     });
 
     applyData(normalized);
-    await AsyncStorage.setItem(PROVIDER_ONBOARDING_STORAGE_KEY, JSON.stringify(normalized));
-    await AsyncStorage.removeItem(LEGACY_PROVIDER_ONBOARDING_STORAGE_KEY);
 
-    if (session.isAuthenticated && session.activeRole === 'provider' && session.uid && !session.configError) {
-      try {
-        const remoteProfile = await saveProviderProfilePatch(session.uid, {
-          professionalProfile: {
-            businessName: normalized.professionalProfile.businessName || '',
-            displayName: normalized.professionalProfile.displayName || normalized.account.name || '',
-            specialization: normalized.professionalProfile.specialization || '',
-            baseRateAmount: normalized.professionalProfile.baseRate ? Number(normalized.professionalProfile.baseRate) : null,
-            ...buildCoverageAreaPatch(normalized.professionalProfile.coverageAreaConfig),
-            shortBio: normalized.professionalProfile.shortBio || '',
-          },
+    if (!canUseRemote) {
+      return normalized;
+    }
+
+    try {
+      const remoteProfile = await saveProviderProfilePatch(session.uid, {
+        professionalProfile: {
+          businessName: normalized.professionalProfile.businessName || '',
+          displayName: normalized.professionalProfile.displayName || normalized.account.name || '',
+          specialization: normalized.professionalProfile.specialization || '',
+          baseRateAmount: normalized.professionalProfile.baseRate ? Number(normalized.professionalProfile.baseRate) : null,
+          ...buildCoverageAreaPatch(normalized.professionalProfile.coverageAreaConfig),
+          shortBio: normalized.professionalProfile.shortBio || '',
+        },
+      });
+
+      if (remoteProfile && requestId === saveRequestIdRef.current) {
+        const nextRemoteValue = normalizeProviderOnboarding({
+          ...latestDataRef.current,
+          ...mapProviderDocToHookData(remoteProfile, latestDataRef.current),
+          verificationStatus: toUiProviderVerificationStatus(remoteProfile.status),
         });
-
-        if (remoteProfile && requestId === saveRequestIdRef.current) {
-          const nextRemoteValue = normalizeProviderOnboarding({
-            ...latestDataRef.current,
-            ...mapProviderDocToHookData(remoteProfile, latestDataRef.current),
-            verificationStatus: toUiProviderVerificationStatus(remoteProfile.status),
-          });
-          applyData(nextRemoteValue);
-          return nextRemoteValue;
-        }
-      } catch {
+        applyData(nextRemoteValue);
+        return nextRemoteValue;
       }
+    } catch (nextError) {
+      setError(nextError);
     }
 
     if (requestId === saveRequestIdRef.current) {
       applyData(normalized);
     }
     return normalized;
-  }, [applyData, session.activeRole, session.configError, session.isAuthenticated, session.uid]);
+  }, [applyData, canUseRemote, session.uid]);
 
-  const clearProviderOnboarding = useCallback(async () => {
-    await AsyncStorage.removeItem(PROVIDER_ONBOARDING_STORAGE_KEY);
-    await AsyncStorage.removeItem(LEGACY_PROVIDER_ONBOARDING_STORAGE_KEY);
+  const clearProviderOnboarding = useCallback(() => {
     applyData(defaultProviderOnboarding);
+    return defaultProviderOnboarding;
   }, [applyData]);
 
   const onboardingProgress = useMemo(() => {
@@ -208,8 +193,10 @@ export function useProviderOnboarding() {
   return {
     data,
     isLoading,
+    error,
     onboardingProgress,
     loadProviderOnboarding,
+    reload: loadProviderOnboarding,
     saveProviderOnboarding,
     clearProviderOnboarding,
   };

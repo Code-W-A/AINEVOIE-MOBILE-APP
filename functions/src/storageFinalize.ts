@@ -1,5 +1,7 @@
 import { FieldValue, Firestore } from 'firebase-admin/firestore';
 import { Storage } from 'firebase-admin/storage';
+import { randomUUID } from 'crypto';
+import sharp from 'sharp';
 import { badRequest, failedPrecondition } from './errors';
 import {
   PROVIDER_DOCUMENT_TYPES,
@@ -23,6 +25,9 @@ type FinalizeUploadPayload = {
 type FinalizeProviderDocumentPayload = FinalizeUploadPayload & {
   documentType?: string,
 };
+
+const PROVIDER_AVATAR_OUTPUT_SIZE = 1024;
+const PROVIDER_AVATAR_QUALITY = 88;
 
 function ensurePathPrefix(storagePath: string, prefix: string) {
   if (!storagePath.startsWith(prefix)) {
@@ -61,6 +66,44 @@ function providerCanUpdateDocuments(status: string) {
     PROVIDER_STATUSES.PRE_REGISTERED,
     PROVIDER_STATUSES.REJECTED,
   ] as string[]).includes(status);
+}
+
+async function normalizeProviderAvatarImage(storage: Storage, uid: string, storagePath: string) {
+  const bucket = storage.bucket();
+  const sourceFile = bucket.file(storagePath);
+  const [sourceBuffer] = await sourceFile.download();
+
+  let normalizedBuffer: Buffer;
+
+  try {
+    normalizedBuffer = await sharp(sourceBuffer, { failOn: 'warning' })
+      .rotate()
+      .resize(PROVIDER_AVATAR_OUTPUT_SIZE, PROVIDER_AVATAR_OUTPUT_SIZE, {
+        fit: 'cover',
+        position: 'center',
+      })
+      .jpeg({
+        quality: PROVIDER_AVATAR_QUALITY,
+        mozjpeg: true,
+      })
+      .toBuffer();
+  } catch {
+    throw badRequest('Provider avatar must be a valid image file.');
+  }
+
+  const normalizedPath = `providers/${uid}/avatar/profile.jpg`;
+  await bucket.file(normalizedPath).save(normalizedBuffer, {
+    resumable: false,
+    metadata: {
+      contentType: 'image/jpeg',
+      cacheControl: 'public, max-age=3600',
+      metadata: {
+        firebaseStorageDownloadTokens: randomUUID(),
+      },
+    },
+  });
+
+  return normalizedPath;
 }
 
 export async function finalizeUserAvatarUploadService(
@@ -133,12 +176,14 @@ export async function finalizeProviderAvatarUploadService(
     throw failedPrecondition('Provider avatar cannot be updated in the current status.');
   }
 
-  await deleteIfReplaced(storage, providerData.professionalProfile?.avatarPath, storagePath);
+  const normalizedAvatarPath = await normalizeProviderAvatarImage(storage, uid, storagePath);
+  await deleteIfReplaced(storage, providerData.professionalProfile?.avatarPath, normalizedAvatarPath);
+  await deleteIfReplaced(storage, storagePath, normalizedAvatarPath);
 
   await providerRef.set({
     professionalProfile: {
       ...providerData.professionalProfile,
-      avatarPath: storagePath,
+      avatarPath: normalizedAvatarPath,
     },
     updatedAt: FieldValue.serverTimestamp(),
     updatedBy: uid,
@@ -154,7 +199,7 @@ export async function finalizeProviderAvatarUploadService(
     outcome: 'success',
   }, 'Provider avatar upload was finalized.');
 
-  return { avatarPath: storagePath };
+  return { avatarPath: normalizedAvatarPath };
 }
 
 export async function finalizeProviderDocumentUploadService(

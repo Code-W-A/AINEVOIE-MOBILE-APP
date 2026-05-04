@@ -1,5 +1,6 @@
-import { collection, doc, getDoc, getDocs } from 'firebase/firestore';
+import { collection, doc, getDoc, getDocs, query, where } from 'firebase/firestore';
 import { getFirebaseServices } from './client';
+import { resolveStoragePathDownloadUrl } from './storageUploads';
 import {
   buildCoverageAreaText,
   getCoverageAreaTags,
@@ -50,6 +51,7 @@ function normalizeProviderDirectoryRecord(id, payload) {
     reviewCount: Number(payload?.reviewCount) || 0,
     jobCount: Number(payload?.jobCount) || 0,
     avatarPath: sanitizeText(payload?.avatarPath) || null,
+    avatarUrl: null,
     serviceSummaries: Array.isArray(payload?.serviceSummaries)
       ? payload.serviceSummaries.map((service) => normalizeProviderServiceRecord(service))
       : [],
@@ -58,20 +60,41 @@ function normalizeProviderDirectoryRecord(id, payload) {
   };
 }
 
+async function withResolvedAvatar(record) {
+  if (!record.avatarPath) {
+    return record;
+  }
+
+  try {
+    const avatarUrl = await resolveStoragePathDownloadUrl(record.avatarPath);
+    return {
+      ...record,
+      avatarUrl,
+    };
+  } catch {
+    return record;
+  }
+}
+
 export async function fetchProviderDirectoryList() {
   const { db } = getFirebaseServices();
-  const snapshot = await getDocs(collection(db, 'providerDirectory'));
+  const snapshot = await getDocs(query(
+    collection(db, 'providerDirectory'),
+    where('status', '==', 'approved'),
+  ));
 
-  return snapshot.docs.map((item) => normalizeProviderDirectoryRecord(item.id, item.data()));
+  return Promise.all(snapshot.docs.map((item) => (
+    withResolvedAvatar(normalizeProviderDirectoryRecord(item.id, item.data()))
+  )));
 }
 
 export async function fetchProviderDirectoryProfile(providerId) {
   const { db } = getFirebaseServices();
   const snapshot = await getDoc(doc(db, 'providerDirectory', providerId));
 
-  if (!snapshot.exists()) {
+  if (!snapshot.exists() || snapshot.data()?.status !== 'approved') {
     return null;
   }
 
-  return normalizeProviderDirectoryRecord(snapshot.id, snapshot.data());
+  return withResolvedAvatar(normalizeProviderDirectoryRecord(snapshot.id, snapshot.data()));
 }

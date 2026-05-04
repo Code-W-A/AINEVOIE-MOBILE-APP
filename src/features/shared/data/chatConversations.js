@@ -5,7 +5,7 @@ export const providerChatConversations = [
     name: 'Andrei Popescu',
     about: 'Bună, cu ce te pot ajuta?',
     seen: 'acum 1 zi',
-    isReadable: true,
+    isUnread: true,
     status: 'Online',
   },
   {
@@ -14,7 +14,7 @@ export const providerChatConversations = [
     name: 'Vlad Dumitrescu',
     about: 'În regulă',
     seen: 'acum 1 zi',
-    isReadable: false,
+    isUnread: false,
     status: 'Online',
   },
   {
@@ -23,7 +23,7 @@ export const providerChatConversations = [
     name: 'Alexandra Matei',
     about: 'Perfect',
     seen: 'acum 5 zile',
-    isReadable: false,
+    isUnread: false,
     status: 'Online',
   },
   {
@@ -32,7 +32,7 @@ export const providerChatConversations = [
     name: 'Alexandra Ionescu',
     about: 'Mulțumesc.',
     seen: 'acum 1 săptămână',
-    isReadable: false,
+    isUnread: false,
     status: 'Online',
   },
   {
@@ -41,7 +41,7 @@ export const providerChatConversations = [
     name: 'Ioana Dumitru',
     about: 'Bună, cu ce te pot ajuta?',
     seen: 'acum 1 zi',
-    isReadable: true,
+    isUnread: true,
     status: 'Online',
   },
   {
@@ -50,7 +50,7 @@ export const providerChatConversations = [
     name: 'Mihai Stan',
     about: 'În regulă',
     seen: 'acum 1 zi',
-    isReadable: false,
+    isUnread: false,
     status: 'Online',
   },
   {
@@ -59,7 +59,7 @@ export const providerChatConversations = [
     name: 'Elena Marin',
     about: 'Foarte bună treabă.',
     seen: 'acum 5 zile',
-    isReadable: false,
+    isUnread: false,
     status: 'Online',
   },
   {
@@ -68,7 +68,7 @@ export const providerChatConversations = [
     name: 'Sorin Petrescu',
     about: 'Vino repede.',
     seen: 'acum 1 săptămână',
-    isReadable: false,
+    isUnread: false,
     status: 'Online',
   },
   {
@@ -77,7 +77,7 @@ export const providerChatConversations = [
     name: 'Andrei Popescu',
     about: 'În regulă',
     seen: 'acum 1 săptămână',
-    isReadable: false,
+    isUnread: false,
     status: 'Online',
   },
 ];
@@ -89,7 +89,7 @@ export const userChatConversations = [
     name: 'Clean Lux',
     about: 'Salut, cum te pot ajuta?',
     seen: 'acum 1 zi',
-    isReadable: true,
+    isUnread: true,
     status: 'Online',
   },
   {
@@ -98,7 +98,7 @@ export const userChatConversations = [
     name: 'Servicii la Fix',
     about: 'În regulă',
     seen: 'acum 1 zi',
-    isReadable: false,
+    isUnread: false,
     status: 'Online',
   },
   {
@@ -107,7 +107,7 @@ export const userChatConversations = [
     name: 'Luna Curată',
     about: 'Perfect',
     seen: 'acum 5 zile',
-    isReadable: false,
+    isUnread: false,
     status: 'Online',
   },
   {
@@ -116,7 +116,7 @@ export const userChatConversations = [
     name: 'Casa Brio',
     about: 'Mulțumesc.',
     seen: 'acum 1 săptămână',
-    isReadable: false,
+    isUnread: false,
     status: 'Online',
   },
   {
@@ -125,7 +125,7 @@ export const userChatConversations = [
     name: 'Urban Curățenie',
     about: 'Salut, cum te pot ajuta?',
     seen: 'acum 1 zi',
-    isReadable: true,
+    isUnread: true,
     status: 'Online',
   },
   {
@@ -134,7 +134,7 @@ export const userChatConversations = [
     name: 'Curățenie Expert',
     about: 'În regulă',
     seen: 'acum 1 zi',
-    isReadable: false,
+    isUnread: false,
     status: 'Online',
   },
   {
@@ -143,7 +143,7 @@ export const userChatConversations = [
     name: 'Casa în Ordine',
     about: 'Foarte bine.',
     seen: 'acum 5 zile',
-    isReadable: false,
+    isUnread: false,
     status: 'Online',
   },
   {
@@ -152,7 +152,7 @@ export const userChatConversations = [
     name: 'Atelierul Curat',
     about: 'Vin imediat.',
     seen: 'acum 1 săptămână',
-    isReadable: false,
+    isUnread: false,
     status: 'Online',
   },
   {
@@ -161,7 +161,7 @@ export const userChatConversations = [
     name: 'Confort Curat',
     about: 'În regulă.',
     seen: 'acum 1 săptămână',
-    isReadable: false,
+    isUnread: false,
     status: 'Online',
   },
 ];

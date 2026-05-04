@@ -8,19 +8,19 @@ function normalizeToken(value) {
     .replace(/^-+|-+$/g, '');
 }
 
-export function getProviderDirectoryRecord({ providerId, providerName } = {}) {
+export function getProviderDirectoryRecord({ providerId, providerName, avatarUrl } = {}) {
   const normalizedId = normalizeToken(providerId);
   const normalizedName = normalizeToken(providerName);
 
   return {
     id: normalizedId || normalizedName || 'provider-generic',
     name: providerName || 'Prestator',
-    image: defaultProviderImage,
+    image: avatarUrl ? { uri: avatarUrl } : defaultProviderImage,
   };
 }
 
-export function getProviderDisplaySnapshot({ providerId, providerName, providerRole } = {}) {
-  const matchedProvider = getProviderDirectoryRecord({ providerId, providerName });
+export function getProviderDisplaySnapshot({ providerId, providerName, providerRole, avatarUrl } = {}) {
+  const matchedProvider = getProviderDirectoryRecord({ providerId, providerName, avatarUrl });
 
   return {
     providerId: matchedProvider.id,

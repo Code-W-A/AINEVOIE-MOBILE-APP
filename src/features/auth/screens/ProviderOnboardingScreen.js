@@ -1,8 +1,8 @@
-import React, { useEffect, useMemo, useState } from 'react';
-import { Alert, Image, KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { ActivityIndicator, Alert, Image, KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
 import { MaterialCommunityIcons, MaterialIcons } from '@expo/vector-icons';
-import { useRouter } from 'expo-router';
+import { useLocalSearchParams, useRouter } from 'expo-router';
 import MyStatusBar from '../../../../components/myStatusBar';
 import { useLocale } from '../../../../context/localeContext';
 import { useSession } from '../../../../context/sessionContext';
@@ -27,18 +27,28 @@ function getSteps(t) {
   ];
 }
 
+function getStepIndexFromRouteParam(step, stepsLength) {
+  const normalizedStep = Array.isArray(step) ? step[0] : step;
+  const routeStepIndex = normalizedStep === 'professional' ? 1 : null;
+
+  return routeStepIndex === null ? null : Math.min(routeStepIndex, stepsLength - 1);
+}
+
 export default function ProviderOnboardingScreen() {
   const router = useRouter();
+  const { step } = useLocalSearchParams();
   const { t } = useLocale();
   const { refreshBootstrap, session, setLastRole } = useSession();
-  const { data, saveProviderOnboarding } = useProviderOnboarding();
+  const { data, isLoading: isProviderOnboardingLoading, saveProviderOnboarding } = useProviderOnboarding();
   const {
     availabilitySummary,
     availabilityDayChips,
     hasConfiguredAvailability,
   } = useProviderAvailability();
   const steps = useMemo(() => getSteps(t), [t]);
-  const [stepIndex, setStepIndex] = useState(Math.min(data.currentStep || 0, steps.length - 1));
+  const routeStepIndex = getStepIndexFromRouteParam(step, steps.length);
+  const [stepIndex, setStepIndex] = useState(Math.min(routeStepIndex ?? data.currentStep ?? 0, steps.length - 1));
+  const hasAppliedRouteStepRef = useRef(routeStepIndex !== null);
   const [fieldErrors, setFieldErrors] = useState({});
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [uploadingDocumentKey, setUploadingDocumentKey] = useState(null);
@@ -49,8 +59,18 @@ export default function ProviderOnboardingScreen() {
   const documents = data.documents;
 
   useEffect(() => {
+    if (routeStepIndex !== null && !hasAppliedRouteStepRef.current) {
+      hasAppliedRouteStepRef.current = true;
+      setStepIndex(routeStepIndex);
+      return;
+    }
+
+    if (routeStepIndex !== null) {
+      return;
+    }
+
     setStepIndex(Math.min(data.currentStep || 0, steps.length - 1));
-  }, [data.currentStep, steps.length]);
+  }, [data.currentStep, routeStepIndex, steps.length]);
 
   const providerTitle = useMemo(() => {
     if (stepIndex === 0) {
@@ -317,10 +337,11 @@ export default function ProviderOnboardingScreen() {
             </View>
 
             {progressCard()}
-            {stepIndex === 0 ? accountStep() : null}
-            {stepIndex === 1 ? professionalStep() : null}
-            {stepIndex === 2 ? documentsStep() : null}
-            {stepIndex === 3 ? reviewStep() : null}
+            {isProviderOnboardingLoading ? loadingStepCard() : null}
+            {!isProviderOnboardingLoading && stepIndex === 0 ? accountStep() : null}
+            {!isProviderOnboardingLoading && stepIndex === 1 ? professionalStep() : null}
+            {!isProviderOnboardingLoading && stepIndex === 2 ? documentsStep() : null}
+            {!isProviderOnboardingLoading && stepIndex === 3 ? reviewStep() : null}
           </ScrollView>
         </KeyboardAvoidingView>
 
@@ -332,9 +353,9 @@ export default function ProviderOnboardingScreen() {
             style={({ pressed }) => [
               styles.primaryButtonStyle,
               { backgroundColor: pressed ? theme.button.primaryBackgroundPressed : theme.button.primaryBackground },
-              isSubmitting || Boolean(uploadingDocumentKey) ? styles.buttonDisabledStyle : null,
+              isProviderOnboardingLoading || isSubmitting || Boolean(uploadingDocumentKey) ? styles.buttonDisabledStyle : null,
             ]}
-            disabled={isSubmitting || Boolean(uploadingDocumentKey)}
+            disabled={isProviderOnboardingLoading || isSubmitting || Boolean(uploadingDocumentKey)}
           >
             <Text style={styles.primaryButtonTextStyle}>
               {stepIndex === steps.length - 1 ? t('providerOnboarding.submitForReview') : t('providerOnboarding.continue')}
@@ -362,6 +383,29 @@ export default function ProviderOnboardingScreen() {
           ))}
         </View>
         <Text style={styles.progressLabelStyle}>{currentStep.label}</Text>
+      </View>
+    );
+  }
+
+  function loadingStepCard() {
+    const skeletonRows = stepIndex === 1 ? [0, 1, 2, 3, 4, 5] : [0, 1, 2];
+
+    return (
+      <View style={styles.stepCardStyle}>
+        <View style={styles.skeletonHeaderRowStyle}>
+          <View style={styles.skeletonIconStyle} />
+          <View style={styles.skeletonHeaderTextWrapStyle}>
+            <Text style={styles.skeletonTitleStyle}>{t('providerOnboarding.loadingProfile')}</Text>
+            <View style={styles.skeletonLineShortStyle} />
+          </View>
+        </View>
+
+        {skeletonRows.map((item) => (
+          <View key={`provider-onboarding-skeleton-${item}`} style={styles.skeletonFieldWrapStyle}>
+            <View style={styles.skeletonLabelStyle} />
+            <View style={styles.skeletonInputStyle} />
+          </View>
+        ))}
       </View>
     );
   }
@@ -540,20 +584,29 @@ export default function ProviderOnboardingScreen() {
     const error = fieldErrors[`documents.${keyName}`];
     const isUploaded = document?.status === 'added' && Boolean(document?.name);
     const isUploading = uploadingDocumentKey === keyName;
+    const actionTitle = isUploading
+      ? t('providerOnboarding.documentUploadingTitle')
+      : isUploaded
+        ? t('providerOnboarding.replaceDocument')
+        : t('providerOnboarding.addDocument');
+    const actionSubtitle = isUploading
+      ? document?.name || t('providerOnboarding.documentUploadingSubtitle')
+      : document?.name || '—';
 
     return (
       <View style={[styles.documentCardStyle, error ? styles.documentCardErrorStyle : null]}>
+        <View style={[styles.documentStatusChipStyle, isUploaded ? styles.documentStatusChipActiveStyle : null]}>
+          <Text style={[styles.documentStatusChipTextStyle, isUploaded ? styles.documentStatusChipTextActiveStyle : null]}>
+            {isUploaded
+              ? t('providerOnboarding.documentUploadedStatus')
+              : t('providerOnboarding.documentMissingStatus')}
+          </Text>
+        </View>
+
         <View style={styles.documentHeaderRowStyle}>
-          <View>
+          <View style={styles.documentHeaderTextWrapStyle}>
             <Text style={styles.documentTitleStyle}>{title}</Text>
             <Text style={styles.documentSubtitleStyle}>{subtitle}</Text>
-          </View>
-          <View style={[styles.documentStatusChipStyle, isUploaded ? styles.documentStatusChipActiveStyle : null]}>
-            <Text style={[styles.documentStatusChipTextStyle, isUploaded ? styles.documentStatusChipTextActiveStyle : null]}>
-              {isUploaded
-                ? t('providerOnboarding.documentUploadedStatus')
-                : t('providerOnboarding.documentMissingStatus')}
-            </Text>
           </View>
         </View>
 
@@ -563,20 +616,22 @@ export default function ProviderOnboardingScreen() {
           disabled={isUploading || isSubmitting}
         >
           <View style={styles.documentActionIconStyle}>
-            <MaterialCommunityIcons
-              name={isUploaded ? 'file-check-outline' : 'file-upload-outline'}
-              size={20}
-              color={theme.brand.primary}
-            />
+            {isUploading ? (
+              <ActivityIndicator size="small" color={theme.brand.primary} />
+            ) : (
+              <MaterialCommunityIcons
+                name={isUploaded ? 'file-check-outline' : 'file-upload-outline'}
+                size={20}
+                color={theme.brand.primary}
+              />
+            )}
           </View>
           <View style={styles.documentActionTextWrapStyle}>
             <Text style={styles.documentActionTitleStyle}>
-              {isUploaded
-                ? t('providerOnboarding.replaceDocument')
-                : t('providerOnboarding.addDocument')}
+              {actionTitle}
             </Text>
             <Text style={styles.documentActionSubtitleStyle}>
-              {document?.name || '—'}
+              {actionSubtitle}
             </Text>
           </View>
         </Pressable>
@@ -614,7 +669,10 @@ export default function ProviderOnboardingScreen() {
         ) : null}
 
         <Pressable
-          onPress={() => router.push('/provider/availability/providerAvailabilityScreen')}
+          onPress={() => router.push({
+            pathname: '/provider/availability/providerAvailabilityScreen',
+            params: { source: 'providerOnboarding' },
+          })}
           style={styles.inlineActionButtonStyle}
         >
           <Text style={styles.inlineActionButtonTextStyle}>
@@ -848,6 +906,50 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: 10 },
     elevation: 4,
   },
+  skeletonHeaderRowStyle: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 18,
+  },
+  skeletonIconStyle: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: theme.brand.primarySoft,
+  },
+  skeletonHeaderTextWrapStyle: {
+    flex: 1,
+    marginLeft: 12,
+  },
+  skeletonTitleStyle: {
+    color: theme.text.primary,
+    fontSize: 14,
+    fontFamily: 'Montserrat_Bold',
+    marginBottom: 8,
+  },
+  skeletonLineShortStyle: {
+    width: '56%',
+    height: 10,
+    borderRadius: 999,
+    backgroundColor: 'rgba(44,62,80,0.10)',
+  },
+  skeletonFieldWrapStyle: {
+    marginBottom: 16,
+  },
+  skeletonLabelStyle: {
+    width: '38%',
+    height: 12,
+    borderRadius: 999,
+    backgroundColor: 'rgba(44,62,80,0.10)',
+    marginBottom: 8,
+  },
+  skeletonInputStyle: {
+    minHeight: 56,
+    borderRadius: 18,
+    backgroundColor: 'rgba(44,62,80,0.08)',
+    borderWidth: 1,
+    borderColor: 'rgba(44,62,80,0.06)',
+  },
   fieldWrapStyle: {
     marginBottom: 16,
   },
@@ -991,6 +1093,7 @@ const styles = StyleSheet.create({
     fontFamily: 'Montserrat_Bold',
   },
   documentCardStyle: {
+    position: 'relative',
     borderRadius: 24,
     borderWidth: 1,
     borderColor: theme.border.subtle,
@@ -1006,6 +1109,10 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     alignItems: 'flex-start',
   },
+  documentHeaderTextWrapStyle: {
+    flex: 1,
+    paddingRight: 104,
+  },
   documentTitleStyle: {
     color: theme.text.primary,
     fontSize: 15,
@@ -1018,9 +1125,13 @@ const styles = StyleSheet.create({
     fontSize: 13,
     lineHeight: 20,
     fontFamily: 'Montserrat_Medium',
-    maxWidth: '88%',
   },
   documentStatusChipStyle: {
+    position: 'absolute',
+    top: 14,
+    right: 14,
+    zIndex: 1,
+    maxWidth: 96,
     paddingHorizontal: 12,
     paddingVertical: 7,
     borderRadius: 999,
@@ -1033,6 +1144,7 @@ const styles = StyleSheet.create({
     color: theme.text.secondary,
     fontSize: 12,
     fontFamily: 'Montserrat_Bold',
+    textAlign: 'center',
   },
   documentStatusChipTextActiveStyle: {
     color: theme.brand.primaryDark,

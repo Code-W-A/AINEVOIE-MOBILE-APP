@@ -14,7 +14,7 @@ export default function PaymentSummaryCard({ booking, onPayNow }) {
   const total = formatMoney(booking?.price?.amount ?? 0, booking?.price?.currency);
   const method = getPaymentMethodLabel(payment.method, payment.last4);
   const transactionId = payment.transactionId || (payment.status === 'failed' ? t('payment.unavailable') : '—');
-  const canRetryPayment = payment.status === 'unpaid' || payment.status === 'failed';
+  const canRetryPayment = booking?.lifecycleStatus === 'confirmed' && (payment.status === 'unpaid' || payment.status === 'failed');
 
   return (
     <View style={styles.cardWrap}>

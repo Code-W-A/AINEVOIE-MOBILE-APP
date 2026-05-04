@@ -45,7 +45,7 @@ export function buildProviderDirectoryDoc(
   providerData: Record<string, any>,
   availabilityData: Record<string, any> | null = null,
   servicesData: Record<string, any>[] = [],
-  reviewAggregate: { ratingAverage: number, reviewCount: number } | null = null,
+  reviewAggregate: { ratingAverage: number, reviewCount: number, ratingSum?: number } | null = null,
 ) {
   const professionalProfile = providerData.professionalProfile || {};
   const displayName = sanitizeString(professionalProfile.businessName)
@@ -58,8 +58,17 @@ export function buildProviderDirectoryDoc(
   const serviceSummaries = buildProviderServiceSummaries(normalizedServicesData);
   const categoryPrimary = derivePrimaryCategory(normalizedServicesData, professionalProfile.specialization);
   const coverageArea = normalizeCoverageArea(professionalProfile.coverageArea);
-  const coverageAreaText = buildCoverageAreaText(coverageArea)
-    || sanitizeString(professionalProfile.coverageAreaText)
+  const profileCoverageAreaText = sanitizeString(professionalProfile.coverageAreaText);
+  const hasCoverageAreaDetails = Boolean(
+    coverageArea.countyCode
+    || coverageArea.countyName
+    || coverageArea.cityCode
+    || coverageArea.cityName
+    || coverageArea.locationLabel
+    || coverageArea.formattedAddress
+  );
+  const coverageAreaText = profileCoverageAreaText
+    || (hasCoverageAreaDetails ? buildCoverageAreaText(coverageArea) : '')
     || 'Acoperire nespecificată';
   const normalizedAvailability = availabilityData || null;
   const derivedAvailabilitySummary = normalizedAvailability && hasConfiguredAvailability(normalizedAvailability.weekSchedule)
@@ -75,6 +84,7 @@ export function buildProviderDirectoryDoc(
   const validBaseRateAmount = Number.isFinite(baseRateAmount) && baseRateAmount > 0 ? baseRateAmount : 0;
   const ratingAverage = Number(reviewAggregate?.ratingAverage) || 0;
   const reviewCount = Number(reviewAggregate?.reviewCount) || 0;
+  const ratingSum = Number(reviewAggregate?.ratingSum) || 0;
 
   return {
     providerId,
@@ -99,6 +109,7 @@ export function buildProviderDirectoryDoc(
     baseRateCurrency: sanitizeString(professionalProfile.baseRateCurrency) || 'RON',
     ratingAverage,
     reviewCount,
+    ratingSum,
     jobCount: 0,
     avatarPath: sanitizeString(professionalProfile.avatarPath) || null,
     serviceSummaries,
@@ -136,7 +147,20 @@ export async function syncProviderDirectorySnapshot(
 
   const availabilityData = await fetchProviderAvailabilityProfile({ db }, providerId);
   const servicesData = await fetchProviderServices({ db }, providerId);
-  const reviewAggregate = await fetchProviderReviewAggregate({ db }, providerId);
+
+  const directorySnap = await directoryRef.get();
+  let reviewAggregate;
+  if (directorySnap.exists) {
+    const existing = directorySnap.data() || {};
+    reviewAggregate = {
+      ratingAverage: Number(existing.ratingAverage) || 0,
+      reviewCount: Number(existing.reviewCount) || 0,
+      ratingSum: Number(existing.ratingSum) || 0,
+    };
+  } else {
+    reviewAggregate = await fetchProviderReviewAggregate({ db }, providerId);
+  }
+
   await directoryRef.set(buildProviderDirectoryDoc(
     providerId,
     providerData,

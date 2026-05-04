@@ -1,5 +1,6 @@
-import React, { useMemo, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
+  ActivityIndicator,
   Alert,
   FlatList,
   KeyboardAvoidingView,
@@ -19,37 +20,85 @@ import {
   AinevoieDiscoveryTypography,
   AinevoieDiscoveryTokens,
 } from '../../shared/styles/discoverySystem';
-import { getChatContactByName } from '../data/chatConversations';
+import { ensureBookingConversation, ensureDirectConversation } from '../../../firebase/chat';
+import { useChatMessages } from '../../../../hooks/useChatMessages';
 import ChatCircleButton from '../components/chat/ChatCircleButton';
 import ChatComposer from '../components/chat/ChatComposer';
 import ChatContactIdentity from '../components/chat/ChatContactIdentity';
-import ChatDateSeparator from '../components/chat/ChatDateSeparator';
 import ChatMessageBubble from '../components/chat/ChatMessageBubble';
 import ChatOverflowMenu from '../components/chat/ChatOverflowMenu';
 import ChatTopBar from '../components/chat/ChatTopBar';
 
-function getInitialMessages(t) {
-  return [
-    { id: '1', message: t('messages.sampleMessage1'), time: '09:35', isSender: true, isSeen: true },
-    { id: '2', message: t('messages.sampleMessage2'), time: '09:36', isSender: false },
-    { id: '3', message: t('messages.sampleMessage3'), time: '09:37', isSender: false },
-    { id: '4', message: t('messages.sampleMessage4'), time: '09:38', isSender: true, isSeen: false },
-  ];
-}
-
 const fallbackAvatar = require('../../../../assets/images/user/user_1.jpg');
 
-export default function SharedMessageScreen({ role }) {
-  const normalizedRole = role === 'provider' ? 'provider' : 'user';
+export default function SharedMessageScreen() {
   const { t } = useLocale();
-  const { name } = useLocalSearchParams();
+  const { name, conversationId, providerId, bookingId } = useLocalSearchParams();
   const navigation = useNavigation();
   const listRef = useRef(null);
-  const [messagesList, setMessagesList] = useState(() => getInitialMessages(t));
-  const [message, setMessage] = useState('');
+  const [activeConversationId, setActiveConversationId] = useState(
+    typeof conversationId === 'string' ? conversationId : '',
+  );
+  const [draftMessage, setDraftMessage] = useState('');
+  const [isResolvingConversation, setIsResolvingConversation] = useState(!conversationId && (providerId || bookingId));
+  const [conversationError, setConversationError] = useState(null);
   const [isMenuVisible, setIsMenuVisible] = useState(false);
   const [isSearchVisible, setIsSearchVisible] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
+  const {
+    listItems: messagesList,
+    isLoading: isMessagesLoading,
+    isSending,
+    error: messagesError,
+    sendMessage,
+  } = useChatMessages(activeConversationId);
+
+  useEffect(() => {
+    let isMounted = true;
+
+    async function resolveConversation() {
+      if (activeConversationId) {
+        setIsResolvingConversation(false);
+        return;
+      }
+
+      const nextBookingId = typeof bookingId === 'string' ? bookingId : '';
+      const nextProviderId = typeof providerId === 'string' ? providerId : '';
+
+      if (!nextBookingId && !nextProviderId) {
+        setIsResolvingConversation(false);
+        return;
+      }
+
+      setIsResolvingConversation(true);
+      setConversationError(null);
+
+      try {
+        const result = nextBookingId
+          ? await ensureBookingConversation(nextBookingId)
+          : await ensureDirectConversation(nextProviderId);
+        const resolvedConversationId = result?.conversation?.conversationId;
+
+        if (isMounted && resolvedConversationId) {
+          setActiveConversationId(resolvedConversationId);
+        }
+      } catch (error) {
+        if (isMounted) {
+          setConversationError(error);
+        }
+      } finally {
+        if (isMounted) {
+          setIsResolvingConversation(false);
+        }
+      }
+    }
+
+    void resolveConversation();
+
+    return () => {
+      isMounted = false;
+    };
+  }, [activeConversationId, bookingId, providerId]);
 
   const contactName = useMemo(() => {
     if (typeof name === 'string' && name.trim()) {
@@ -59,7 +108,6 @@ export default function SharedMessageScreen({ role }) {
     return t('messages.defaultConversation');
   }, [name, t]);
 
-  const contact = useMemo(() => getChatContactByName(normalizedRole, contactName), [contactName, normalizedRole]);
   const filteredMessages = useMemo(() => {
     const normalizedQuery = searchQuery.trim().toLowerCase();
 
@@ -70,8 +118,8 @@ export default function SharedMessageScreen({ role }) {
     return messagesList.filter((item) => item.message.toLowerCase().includes(normalizedQuery));
   }, [messagesList, searchQuery]);
 
-  function showDemoAction(label) {
-    Alert.alert(label, t('messages.demoBody'));
+  function showUnavailableAction(label) {
+    Alert.alert(label, 'Această acțiune nu este disponibilă încă pentru conversațiile reale.');
   }
 
   function openSearch() {
@@ -86,44 +134,29 @@ export default function SharedMessageScreen({ role }) {
 
   function handleDeleteConversation() {
     setIsMenuVisible(false);
-    showDemoAction(t('messages.deleteUnavailable'));
+    showUnavailableAction(t('messages.deleteUnavailable'));
   }
 
   function handleBlockConversation() {
     setIsMenuVisible(false);
-    showDemoAction(t('messages.blockUnavailable'));
+    showUnavailableAction(t('messages.blockUnavailable'));
   }
 
-  function addMessage(nextMessage) {
-    const date = new Date();
-    const hour = String(date.getHours()).padStart(2, '0');
-    const minute = String(date.getMinutes()).padStart(2, '0');
+  async function handleSendMessage() {
+    const body = draftMessage.trim();
 
-    setMessagesList((currentMessages) => [
-      ...currentMessages,
-      {
-        id: `${currentMessages.length + 1}`,
-        message: nextMessage,
-        time: `${hour}:${minute}`,
-        isSender: true,
-        isSeen: false,
-      },
-    ]);
-
-    requestAnimationFrame(() => {
-      listRef.current?.scrollToOffset?.({ offset: 0, animated: true });
-    });
-  }
-
-  function handleSend() {
-    const trimmedMessage = message.trim();
-
-    if (!trimmedMessage) {
+    if (!body || isSending || isResolvingConversation || !activeConversationId) {
       return;
     }
 
-    addMessage(trimmedMessage);
-    setMessage('');
+    setDraftMessage('');
+
+    try {
+      await sendMessage(body);
+    } catch (error) {
+      setDraftMessage(body);
+      Alert.alert('Mesaj netrimis', error?.message || 'Încearcă din nou.');
+    }
   }
 
   function renderHeader() {
@@ -133,9 +166,9 @@ export default function SharedMessageScreen({ role }) {
           onBackPress={() => navigation.canGoBack() ? navigation.goBack() : null}
           centerContent={(
             <ChatContactIdentity
-              image={contact?.image || fallbackAvatar}
+              image={fallbackAvatar}
               name={contactName}
-              status={contact?.status || t('messages.online')}
+              status="Chat activ"
             />
           )}
           rightContent={(
@@ -177,26 +210,37 @@ export default function SharedMessageScreen({ role }) {
     );
   }
 
-  function renderDateLabel() {
-    return <ChatDateSeparator label={t('messages.todaySeparator')} />;
-  }
+  function renderEmptyConversation() {
+    if (isResolvingConversation || isMessagesLoading) {
+      return (
+        <View style={styles.emptyConversationWrapStyle}>
+          <ActivityIndicator color={AinevoieDiscoveryTokens.accent} />
+          <Text style={styles.emptyConversationTitleStyle}>Se încarcă conversația</Text>
+        </View>
+      );
+    }
 
-  function renderMessageItem({ item }) {
-    return <ChatMessageBubble item={item} seenIconColor={normalizedRole === 'provider' ? AinevoieDiscoveryTokens.accent : AinevoieDiscoveryTokens.accentDark} />;
-  }
+    const error = conversationError || messagesError;
+    if (error) {
+      return (
+        <View style={styles.emptyConversationWrapStyle}>
+          <MaterialIcons name="error-outline" size={30} color={AinevoieDiscoveryTokens.accent} />
+          <Text style={styles.emptyConversationTitleStyle}>Conversația nu poate fi încărcată</Text>
+          <Text style={styles.emptyConversationTextStyle}>
+            {error?.message || 'Încearcă din nou mai târziu.'}
+          </Text>
+        </View>
+      );
+    }
 
-  function renderComposer() {
     return (
-      <ChatComposer
-        value={message}
-        onChangeText={setMessage}
-        onEmojiPress={() => showDemoAction(t('messages.emojiUnavailable'))}
-        onAttachPress={() => showDemoAction(t('messages.attachmentUnavailable'))}
-        onCameraPress={() => showDemoAction(t('messages.cameraUnavailable'))}
-        onTrailingPress={message.trim() ? handleSend : () => showDemoAction(t('messages.microphoneUnavailable'))}
-        trailingMode={message.trim() ? 'send' : 'mic'}
-        placeholder={t('messages.composerPlaceholder')}
-      />
+      <View style={styles.emptyConversationWrapStyle}>
+        <MaterialIcons name="chat-bubble-outline" size={30} color={AinevoieDiscoveryTokens.accent} />
+        <Text style={styles.emptyConversationTitleStyle}>Începe conversația</Text>
+        <Text style={styles.emptyConversationTextStyle}>
+          Trimite primul mesaj pentru această conversație.
+        </Text>
+      </View>
     );
   }
 
@@ -208,7 +252,6 @@ export default function SharedMessageScreen({ role }) {
         <View style={styles.contentWrapStyle}>
           {isMenuVisible ? <Pressable style={styles.menuBackdropStyle} onPress={() => setIsMenuVisible(false)} /> : null}
           {isSearchVisible ? renderSearchBar() : null}
-          {renderDateLabel()}
           {isSearchVisible && searchQuery.trim().length > 0 && filteredMessages.length === 0 ? (
             <View style={styles.emptySearchStateStyle}>
               <Text style={styles.emptySearchTitleStyle}>{t('messages.noResultsTitle')}</Text>
@@ -220,13 +263,28 @@ export default function SharedMessageScreen({ role }) {
             inverted
             data={filteredMessages}
             keyExtractor={(item) => `${item.id}`}
-            renderItem={renderMessageItem}
+            renderItem={({ item }) => (
+              <ChatMessageBubble
+                item={item}
+                seenIconColor={AinevoieDiscoveryTokens.accent}
+              />
+            )}
             showsVerticalScrollIndicator={false}
             contentContainerStyle={styles.messageListStyle}
             keyboardShouldPersistTaps="handled"
+            ListEmptyComponent={renderEmptyConversation}
           />
         </View>
-        {renderComposer()}
+        <ChatComposer
+          value={draftMessage}
+          onChangeText={setDraftMessage}
+          onEmojiPress={() => showUnavailableAction('Emoji')}
+          onAttachPress={() => showUnavailableAction('Atașamente')}
+          onCameraPress={() => showUnavailableAction('Cameră')}
+          onTrailingPress={handleSendMessage}
+          trailingMode={draftMessage.trim() ? 'send' : 'mic'}
+          placeholder={t('messages.composerPlaceholder')}
+        />
       </KeyboardAvoidingView>
     </View>
   );
@@ -264,6 +322,7 @@ const styles = StyleSheet.create({
     paddingTop: Sizes.fixPadding,
     paddingBottom: Sizes.fixPadding * 2.0,
     flexDirection: 'column-reverse',
+    flexGrow: 1,
   },
   menuBackdropStyle: {
     ...StyleSheet.absoluteFillObject,
@@ -324,5 +383,29 @@ const styles = StyleSheet.create({
   emptySearchTextStyle: {
     ...AinevoieDiscoveryTypography.caption,
     color: AinevoieDiscoveryTokens.textSecondary,
+  },
+  emptyConversationWrapStyle: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 22,
+    paddingVertical: 26,
+    marginTop: Sizes.fixPadding * 2,
+    borderRadius: 20,
+    backgroundColor: AinevoieDiscoveryTokens.surfaceCard,
+    borderWidth: 1,
+    borderColor: AinevoieDiscoveryTokens.borderSubtle,
+  },
+  emptyConversationTitleStyle: {
+    ...AinevoieDiscoveryTypography.body,
+    color: AinevoieDiscoveryTokens.brandDark,
+    textAlign: 'center',
+    marginTop: 10,
+  },
+  emptyConversationTextStyle: {
+    ...AinevoieDiscoveryTypography.caption,
+    color: AinevoieDiscoveryTokens.textSecondary,
+    textAlign: 'center',
+    marginTop: 8,
+    lineHeight: 18,
   },
 });

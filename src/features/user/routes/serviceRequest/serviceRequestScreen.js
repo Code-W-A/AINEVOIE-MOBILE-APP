@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from 'react';
-import { ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { Alert, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { TextInput } from 'react-native-paper';
 import { MaterialIcons } from '@expo/vector-icons';
 import { useLocalSearchParams, useNavigation, useRouter } from 'expo-router';
@@ -9,6 +9,9 @@ import { useLocale } from '../../../../../context/localeContext';
 import { DiscoveryPrimitives, DiscoveryRadius, DiscoverySpacing, DiscoveryTypography } from '../../../shared/styles/discoverySystem';
 import { normalizeEstimatedHours } from '../../../shared/utils/bookingRequestDetails';
 import { DEFAULT_MOCK_CURRENCY, formatMoney, normalizeMockCurrency } from '../../../shared/utils/mockFormatting';
+import { useUserBookings } from '../../../../../hooks/useUserBookings';
+import { useUserPrimaryLocation } from '../../../../../hooks/useUserPrimaryLocation';
+import { getProviderDisplaySnapshot } from '../../../shared/utils/providerDirectory';
 
 const durationOptions = [1, 2, 3, 4, 6, 8];
 
@@ -28,6 +31,8 @@ export default function ServiceRequestScreen() {
   const router = useRouter();
   const params = useLocalSearchParams();
   const { t } = useLocale();
+  const { createBooking } = useUserBookings();
+  const { location } = useUserPrimaryLocation();
   const ratePerHour = parseNumber(params.ratePerHour);
   const currency = normalizeMockCurrency(typeof params.currency === 'string' ? params.currency : DEFAULT_MOCK_CURRENCY);
   const [requestDescription, setRequestDescription] = useState(
@@ -41,6 +46,7 @@ export default function ServiceRequestScreen() {
   });
   const [showDescriptionError, setShowDescriptionError] = useState(false);
   const [showDurationError, setShowDurationError] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
   const estimatedTotal = useMemo(() => {
     if (!selectedHours) {
@@ -66,7 +72,7 @@ export default function ServiceRequestScreen() {
     );
   }
 
-  function handleContinue() {
+  async function handleContinue() {
     const hasDescription = requestDescription.trim().length > 0;
     const hasDuration = Boolean(selectedHours);
     setShowDescriptionError(!hasDescription);
@@ -76,15 +82,61 @@ export default function ServiceRequestScreen() {
       return;
     }
 
-    router.push({
-      pathname: '/user/checkout/checkoutScreen',
-      params: {
-        ...params,
-        requestDescription: requestDescription.trim(),
-        estimatedHours: String(selectedHours),
-        amount: String(ratePerHour * selectedHours),
-      },
-    });
+    setIsSubmitting(true);
+
+    try {
+      const providerSnapshot = getProviderDisplaySnapshot({
+        providerId: typeof params.providerId === 'string' ? params.providerId : '',
+        providerName: typeof params.providerName === 'string' ? params.providerName : '',
+        providerRole: typeof params.providerRole === 'string' ? params.providerRole : '',
+      });
+      const draft = {
+        providerId: providerSnapshot.providerId,
+        providerName: providerSnapshot.providerName,
+        providerRole: providerSnapshot.providerRole,
+        providerImage: providerSnapshot.providerImage,
+        serviceId: typeof params.serviceId === 'string' ? params.serviceId : '',
+        serviceName: typeof params.serviceName === 'string' ? params.serviceName : t('serviceRequestForm.service'),
+        scheduledDateKey: typeof params.scheduledDateKey === 'string' ? params.scheduledDateKey : '',
+        scheduledStartTime: typeof params.scheduledStartTime === 'string' ? params.scheduledStartTime : '',
+        timezone: typeof params.timezone === 'string' ? params.timezone : 'Europe/Bucharest',
+        dateLabel: typeof params.dateLabel === 'string' ? params.dateLabel : t('selectDateTime.defaultDateLabel'),
+        timeLabel: typeof params.timeLabel === 'string' ? params.timeLabel : t('selectDateTime.defaultTimeLabel'),
+        address: typeof params.address === 'string' && params.address.trim()
+          ? params.address.trim()
+          : (location?.formattedAddress || '—'),
+        price: {
+          amount: ratePerHour * selectedHours,
+          currency,
+          unit: 'oră',
+          estimatedHours: selectedHours,
+        },
+        requestDetails: {
+          description: requestDescription.trim(),
+          estimatedHours: selectedHours,
+        },
+        bookingStatus: 'upcoming',
+        requestKey: typeof params.requestKey === 'string' && params.requestKey ? params.requestKey : `req_${Date.now()}`,
+      };
+      const booking = await createBooking({
+        draft,
+        payment: {
+          status: 'unpaid',
+          method: 'unknown',
+        },
+      });
+
+      router.replace({
+        pathname: '/user/bookingSuccess/bookingSuccessScreen',
+        params: {
+          bookingId: booking.id,
+        },
+      });
+    } catch (error) {
+      Alert.alert(t('payment.errorTitle'), error?.message || t('payment.errorUnknown'));
+    } finally {
+      setIsSubmitting(false);
+    }
   }
 
   return (
@@ -179,10 +231,11 @@ export default function ServiceRequestScreen() {
         </View>
         <TouchableOpacity
           activeOpacity={0.92}
-          onPress={handleContinue}
-          style={[styles.primaryButton, !isValid ? styles.primaryButtonDisabled : null]}
+          disabled={!isValid || isSubmitting}
+          onPress={() => { void handleContinue(); }}
+          style={[styles.primaryButton, !isValid || isSubmitting ? styles.primaryButtonDisabled : null]}
         >
-          <Text style={styles.primaryButtonText}>{t('serviceRequestForm.continueToCheckout')}</Text>
+          <Text style={styles.primaryButtonText}>{isSubmitting ? t('payment.processing') : t('serviceRequestForm.sendRequest')}</Text>
         </TouchableOpacity>
       </View>
     </View>

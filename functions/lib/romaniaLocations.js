@@ -57,8 +57,14 @@ const COUNTY_DEFINITIONS = Object.freeze([
     { countyCode: 'VS', countyName: 'Vaslui', cities: ['Vaslui', 'Barlad', 'Husi', 'Negresti'] },
     { countyCode: 'VL', countyName: 'Valcea', aliases: ['Valcea'], cities: ['Ramnicu Valcea', 'Dragasani', 'Calimanesti', 'Babeni', 'Horezu'] },
     { countyCode: 'VN', countyName: 'Vrancea', cities: ['Focsani', 'Adjud', 'Marasesti', 'Odobesti', 'Panciu'] },
-    { countyCode: 'B', countyName: 'Bucuresti', aliases: ['Bucuresti', 'Municipiul Bucuresti'], cities: ['Bucuresti'] },
+    { countyCode: 'B', countyName: 'Bucuresti', aliases: ['Bucuresti', 'Municipiul Bucuresti'], cities: ['Sector 1', 'Sector 2', 'Sector 3', 'Sector 4', 'Sector 5', 'Sector 6'] },
 ]);
+const BUCHAREST_COUNTY_CODE = 'B';
+const LEGACY_BUCHAREST_CITY = Object.freeze({
+    cityCode: 'bucuresti',
+    cityName: 'București',
+    aliases: ['Bucuresti', 'București', 'Municipiul Bucuresti', 'Municipiul București', 'Bucharest'],
+});
 function withDiacriticsFallback(value) {
     const normalized = sanitizeText(value);
     if (!normalized) {
@@ -209,6 +215,13 @@ function getCityCandidates(city) {
         ...(Array.isArray(city.aliases) ? city.aliases : []),
     ];
 }
+function isBucharestCounty(county) {
+    return county?.countyCode === BUCHAREST_COUNTY_CODE;
+}
+function matchesLegacyBucharestCity(value) {
+    return matchByCandidates(getCityCandidates(LEGACY_BUCHAREST_CITY), value)
+        || matchIncludesCandidates(getCityCandidates(LEGACY_BUCHAREST_CITY), value);
+}
 function matchByCandidates(candidates, value) {
     const normalizedValue = normalizeToken(value);
     if (!normalizedValue) {
@@ -266,7 +279,14 @@ function findRomaniaCity(countyCode, value) {
     if (exactMatch) {
         return exactMatch;
     }
-    return county.cities.find((city) => matchIncludesCandidates(getCityCandidates(city), normalizedValue)) || null;
+    const includesMatch = county.cities.find((city) => matchIncludesCandidates(getCityCandidates(city), normalizedValue));
+    if (includesMatch) {
+        return includesMatch;
+    }
+    if (isBucharestCounty(county) && matchesLegacyBucharestCity(normalizedValue)) {
+        return { ...LEGACY_BUCHAREST_CITY };
+    }
+    return null;
 }
 function resolveRomaniaCoverageHierarchy(input = {}) {
     const countryValue = uniqueStrings([
@@ -283,10 +303,12 @@ function resolveRomaniaCoverageHierarchy(input = {}) {
     ]);
     const cityValue = uniqueStrings([
         input.cityCode,
-        input.cityName,
-        input.city,
+        input.sublocality,
         input.locality,
         input.district,
+        input.formattedAddress,
+        input.cityName,
+        input.city,
         input.name,
     ]);
     const isRomania = countryValue.length === 0
@@ -312,9 +334,11 @@ function deriveRomaniaHierarchyFromPlacemark(input = {}) {
         countyCode: input.countyCode,
         countyName: input.region || input.countyName || input.subregion,
         cityCode: input.cityCode,
-        cityName: input.city || input.cityName || input.district || input.locality,
+        cityName: input.sublocality || input.district || input.city || input.cityName || input.locality,
+        sublocality: input.sublocality,
         district: input.district,
         name: input.name,
+        formattedAddress,
     });
     if (hierarchy.countyCode && hierarchy.cityCode) {
         return hierarchy;

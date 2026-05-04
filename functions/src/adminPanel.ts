@@ -198,6 +198,8 @@ function buildProviderListItem(providerId: string, provider: Record<string, any>
 }
 
 function buildBookingListItem(bookingId: string, booking: Record<string, any>) {
+  const pricingSnapshot = booking.pricingSnapshot || {};
+
   return serializeValue({
     bookingId,
     status: sanitizeString(booking.status),
@@ -207,7 +209,12 @@ function buildBookingListItem(bookingId: string, booking: Record<string, any>) {
     scheduledStartAt: booking.scheduledStartAt || null,
     scheduledEndAt: booking.scheduledEndAt || null,
     timezone: sanitizeString(booking.timezone),
-    paymentSummary: booking.paymentSummary || {},
+    pricingSnapshot,
+    paymentSummary: {
+      ...(booking.paymentSummary || {}),
+      amount: Number(pricingSnapshot.amount) || 0,
+      currency: sanitizeString(pricingSnapshot.currency) || 'RON',
+    },
     userSnapshot: booking.userSnapshot || {},
     providerSnapshot: booking.providerSnapshot || {},
     serviceSnapshot: booking.serviceSnapshot || {},

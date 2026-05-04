@@ -1,12 +1,19 @@
 "use strict";
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
+};
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.finalizeUserAvatarUploadService = finalizeUserAvatarUploadService;
 exports.finalizeProviderAvatarUploadService = finalizeProviderAvatarUploadService;
 exports.finalizeProviderDocumentUploadService = finalizeProviderDocumentUploadService;
 const firestore_1 = require("firebase-admin/firestore");
+const crypto_1 = require("crypto");
+const sharp_1 = __importDefault(require("sharp"));
 const errors_1 = require("./errors");
 const shared_1 = require("./shared");
 const logging_1 = require("./logging");
+const PROVIDER_AVATAR_OUTPUT_SIZE = 1024;
+const PROVIDER_AVATAR_QUALITY = 88;
 function ensurePathPrefix(storagePath, prefix) {
     if (!storagePath.startsWith(prefix)) {
         throw (0, errors_1.badRequest)('The uploaded file path is invalid for this resource.');
@@ -37,6 +44,40 @@ function providerCanUpdateDocuments(status) {
         shared_1.PROVIDER_STATUSES.PRE_REGISTERED,
         shared_1.PROVIDER_STATUSES.REJECTED,
     ].includes(status);
+}
+async function normalizeProviderAvatarImage(storage, uid, storagePath) {
+    const bucket = storage.bucket();
+    const sourceFile = bucket.file(storagePath);
+    const [sourceBuffer] = await sourceFile.download();
+    let normalizedBuffer;
+    try {
+        normalizedBuffer = await (0, sharp_1.default)(sourceBuffer, { failOn: 'warning' })
+            .rotate()
+            .resize(PROVIDER_AVATAR_OUTPUT_SIZE, PROVIDER_AVATAR_OUTPUT_SIZE, {
+            fit: 'cover',
+            position: 'center',
+        })
+            .jpeg({
+            quality: PROVIDER_AVATAR_QUALITY,
+            mozjpeg: true,
+        })
+            .toBuffer();
+    }
+    catch {
+        throw (0, errors_1.badRequest)('Provider avatar must be a valid image file.');
+    }
+    const normalizedPath = `providers/${uid}/avatar/profile.jpg`;
+    await bucket.file(normalizedPath).save(normalizedBuffer, {
+        resumable: false,
+        metadata: {
+            contentType: 'image/jpeg',
+            cacheControl: 'public, max-age=3600',
+            metadata: {
+                firebaseStorageDownloadTokens: (0, crypto_1.randomUUID)(),
+            },
+        },
+    });
+    return normalizedPath;
 }
 async function finalizeUserAvatarUploadService({ db, storage }, uid, payload) {
     const storagePath = (0, shared_1.sanitizeStoragePath)(payload.storagePath);
@@ -84,11 +125,13 @@ async function finalizeProviderAvatarUploadService({ db, storage }, uid, payload
     if (!providerCanUpdateAvatar(currentStatus)) {
         throw (0, errors_1.failedPrecondition)('Provider avatar cannot be updated in the current status.');
     }
-    await deleteIfReplaced(storage, providerData.professionalProfile?.avatarPath, storagePath);
+    const normalizedAvatarPath = await normalizeProviderAvatarImage(storage, uid, storagePath);
+    await deleteIfReplaced(storage, providerData.professionalProfile?.avatarPath, normalizedAvatarPath);
+    await deleteIfReplaced(storage, storagePath, normalizedAvatarPath);
     await providerRef.set({
         professionalProfile: {
             ...providerData.professionalProfile,
-            avatarPath: storagePath,
+            avatarPath: normalizedAvatarPath,
         },
         updatedAt: firestore_1.FieldValue.serverTimestamp(),
         updatedBy: uid,
@@ -102,7 +145,7 @@ async function finalizeProviderAvatarUploadService({ db, storage }, uid, payload
         statusTo: currentStatus,
         outcome: 'success',
     }, 'Provider avatar upload was finalized.');
-    return { avatarPath: storagePath };
+    return { avatarPath: normalizedAvatarPath };
 }
 async function finalizeProviderDocumentUploadService({ db, storage }, uid, payload) {
     const documentType = (0, shared_1.isProviderDocumentType)(payload.documentType)

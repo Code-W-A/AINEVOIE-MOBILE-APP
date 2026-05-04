@@ -178,6 +178,13 @@ export async function saveUserPrimaryLocation(uid, location) {
   });
 }
 
+export async function clearUserPrimaryLocation(uid) {
+  return saveUserProfilePatch(uid, {
+    primaryLocation: null,
+    'profileCompletion.hasPrimaryLocation': false,
+  });
+}
+
 export async function saveRoleNotificationPreferences(role, uid, preferences) {
   const normalizedPreferences = normalizeNotificationPreferences(preferences);
 

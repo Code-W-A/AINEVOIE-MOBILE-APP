@@ -28,6 +28,11 @@ service cloud.firestore {
         && get(/databases/$(database)/documents/providers/$(uid)).data.status != 'suspended';
     }
 
+    function providerCanManageAvailability(uid) {
+      return providerCanManageServiceDocs(uid)
+        && get(/databases/$(database)/documents/providers/$(uid)).data.role == 'provider';
+    }
+
     function userMutableKeys() {
       return [
         'displayName',
@@ -185,6 +190,10 @@ service cloud.firestore {
         );
     }
 
+    function conversationMembershipId(conversationId) {
+      return conversationId + '_' + request.auth.uid;
+    }
+
     match /users/{uid} {
       allow read: if isSelf(uid);
       allow create, delete: if false;
@@ -219,7 +228,10 @@ service cloud.firestore {
 
       match /availability/{docId} {
         allow read: if docId == 'profile';
-        allow create, update, delete: if false;
+        allow create, update: if docId == 'profile'
+          && providerCanManageAvailability(uid)
+          && request.resource.data.keys().hasOnly(availabilityMutableKeys());
+        allow delete: if false;
       }
 
       match /services/{serviceId} {
@@ -251,6 +263,23 @@ service cloud.firestore {
 
     match /bookings/{document=**} {
       allow read: if bookingReadableByActor();
+      allow write: if false;
+    }
+
+    match /conversations/{conversationId} {
+      allow read: if signedIn()
+        && exists(/databases/$(database)/documents/conversationMemberships/$(conversationMembershipId(conversationId)));
+      allow write: if false;
+
+      match /messages/{messageId} {
+        allow read: if signedIn()
+          && exists(/databases/$(database)/documents/conversationMemberships/$(conversationMembershipId(conversationId)));
+        allow write: if false;
+      }
+    }
+
+    match /conversationMemberships/{membershipId} {
+      allow read: if signedIn() && resource.data.uid == request.auth.uid;
       allow write: if false;
     }
 

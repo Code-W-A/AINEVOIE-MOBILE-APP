@@ -31,7 +31,7 @@ describe('provider coverage search services', () => {
       {
         query: 'Iuliu',
         countyCode: 'B',
-        cityCode: 'bucuresti',
+        cityCode: 'sector-6',
       },
     );
 
@@ -62,6 +62,7 @@ describe('provider coverage search services', () => {
             address_components: [
               { long_name: 'România', short_name: 'RO', types: ['country', 'political'] },
               { long_name: 'București', short_name: 'B', types: ['administrative_area_level_1', 'political'] },
+              { long_name: 'Sector 6', short_name: 'Sector 6', types: ['sublocality_level_1', 'sublocality', 'political'] },
               { long_name: 'București', short_name: 'București', types: ['locality', 'political'] },
             ],
           },
@@ -77,21 +78,22 @@ describe('provider coverage search services', () => {
       {
         placeId: 'place_1',
         countyCode: 'B',
-        cityCode: 'bucuresti',
+        cityCode: 'sector-6',
       },
     );
 
     expect(result.coverageArea).toEqual(expect.objectContaining({
       countryCode: 'RO',
       countyCode: 'B',
-      cityCode: 'bucuresti',
+      cityCode: 'sector-6',
+      cityName: 'Sector 6',
       placeId: 'place_1',
       locationLabel: 'Bulevardul Iuliu Maniu 10',
       formattedAddress: 'Bulevardul Iuliu Maniu 10, București, România',
       centerLat: 44.4321,
       centerLng: 26.0456,
     }));
-    expect(result.coverageAreaText).toBe('România, București, București');
+    expect(result.coverageAreaText).toBe('România, București, Sector 6');
   });
 
   it('rejects places resolved outside the selected county and city', async () => {
@@ -127,7 +129,7 @@ describe('provider coverage search services', () => {
         {
           placeId: 'place_2',
           countyCode: 'B',
-          cityCode: 'bucuresti',
+          cityCode: 'sector-6',
         },
       ),
     ).rejects.toThrow('does not match the chosen county and city');

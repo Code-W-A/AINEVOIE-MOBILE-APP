@@ -6,7 +6,7 @@ import MyStatusBar from '../../../../../components/myStatusBar';
 import { useNavigation, useRouter } from 'expo-router';
 import { useLocale } from '../../../../../context/localeContext';
 import { useProviderDirectoryList } from '../../../../../hooks/useProviderDirectoryList';
-import { getServiceCategoryCatalog } from '../../../shared/utils/providerServices';
+import { resolveServiceCategory } from '../../../shared/utils/providerServices';
 import {
   AinevoieDiscoveryPrimitives as DiscoveryPrimitives,
   AinevoieDiscoverySpacing as DiscoverySpacing,
@@ -28,46 +28,45 @@ const ProfessionalServicesScreen = () => {
   const [isFilterSheetOpen, setIsFilterSheetOpen] = useState(false);
 
   const serviceCategories = useMemo(() => {
-    const providerCounts = new Map();
+    const categoryMap = new Map();
 
     providers.forEach((provider) => {
-      const categoryKeys = Array.from(
-        new Set(
-          (provider.serviceSummaries || [])
-            .map((service) => service.categoryKey)
-            .filter(Boolean),
-        ),
-      );
+      const hasSummaries = Array.isArray(provider.serviceSummaries) && provider.serviceSummaries.length > 0;
+      const hasCategoryPrimary = Boolean(provider.categoryPrimary);
 
-      categoryKeys.forEach((categoryKey) => {
-        providerCounts.set(categoryKey, (providerCounts.get(categoryKey) || 0) + 1);
+      if (!hasSummaries && !hasCategoryPrimary) {
+        return;
+      }
+
+      const services = hasSummaries
+        ? provider.serviceSummaries.filter((service) => service.isActive !== false)
+        : [{ categoryKey: provider.categoryPrimary, categoryLabel: provider.categoryPrimary }];
+      const providerCategoryMap = new Map();
+
+      services
+        .map((service) => resolveServiceCategory(service.categoryKey || service.categoryLabel || provider.categoryPrimary, locale))
+        .filter((category) => category?.key)
+        .forEach((category) => {
+          providerCategoryMap.set(category.key, category);
+        });
+
+      Array.from(providerCategoryMap.values()).forEach((category) => {
+        const existingCategory = categoryMap.get(category.key);
+
+        categoryMap.set(category.key, {
+          id: category.key,
+          key: category.key,
+          serviceName: category.label,
+          categoryLabel: category.label,
+          image: category.image,
+          providerCount: (existingCategory?.providerCount || 0) + 1,
+        });
       });
     });
 
-    const sharedCatalog = getServiceCategoryCatalog(locale);
-    const categoriesWithProviders = sharedCatalog
-      .map((category) => ({
-        id: category.key,
-        key: category.key,
-        serviceName: category.label,
-        categoryLabel: category.label,
-        image: category.image,
-        providerCount: providerCounts.get(category.key) || 0,
-      }))
-      .filter((category) => category.providerCount > 0);
-
-    if (categoriesWithProviders.length) {
-      return categoriesWithProviders;
-    }
-
-    return sharedCatalog.map((category) => ({
-      id: category.key,
-      key: category.key,
-      serviceName: category.label,
-      categoryLabel: category.label,
-      image: category.image,
-      providerCount: 0,
-    }));
+    return Array.from(categoryMap.values()).sort((firstItem, secondItem) => (
+      secondItem.providerCount - firstItem.providerCount || firstItem.serviceName.localeCompare(secondItem.serviceName)
+    ));
   }, [locale, providers]);
 
   const defaultServiceId = serviceCategories[0]?.id ?? null;
